@@ -1,0 +1,9 @@
+# 이 저장소는 public 입니다. 비밀값이 들어갈 자리를 미리 막아둡니다.
+.env
+.env.*
+*.pem
+*.key
+secrets*
+__pycache__/
+*.pyc
+.venv/
