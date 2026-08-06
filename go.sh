@@ -44,9 +44,24 @@ fi
 # 안 넘어와요. 이미지 쪽 go.sh 가 /etc/chatos.env 로 우회한 것과 같습니다.
 # 한 번 돌리고 나면 터미널에서 다시 돌려도 값이 살아 있습니다.
 
+# **우선순위: 계정 환경변수 > 파일에 이미 있는 값 > 기본값.**
+#
+# 기본값이 파일의 값을 덮으면 손으로 조정한 것이 재부팅 때 조용히 사라집니다.
+# On-start 는 계정 환경변수만 들고 들어오니까요 — 파일에 `AUDIO_SPLIT=1` 을
+# 써둬도 defaults.sh 의 0 이 그 자리를 차지합니다. **켜뒀는데 안 도는 상태**가
+# 되고, 그건 이 저장소에서 제일 피하려는 모양입니다.
+#
+# 그래서 defaults.sh 를 소스하기 **전에** 진짜로 들어온 값을 기록해 둡니다.
+declare -A FROM_ENV=()
+mark_env() { for v in "$@"; do [ -n "${!v:-}" ] && FROM_ENV[$v]=1; done; return 0; }
+
 persist() {
     local name="$1" val="${!1:-}"
     [ -z "$val" ] && return 0
+    # 계정 환경변수로 들어온 것이 아니고 파일에 이미 있으면 그대로 둡니다.
+    if [ -z "${FROM_ENV[$name]:-}" ] && grep -q "^export ${name}=" "$ENV_FILE" 2>/dev/null; then
+        return 0
+    fi
     # 이미 있으면 지우고 새로 씁니다. 값이 바뀌었을 수 있으니까요.
     if [ -f "$ENV_FILE" ]; then
         grep -v "^export ${name}=" "$ENV_FILE" > "${ENV_FILE}.tmp" 2>/dev/null || true
@@ -65,16 +80,24 @@ if grep -q '^export INSTALL_ROOT=' "$ENV_FILE" 2>/dev/null; then
     grep -v '^export INSTALL_ROOT=' "$ENV_FILE" > "${ENV_FILE}.tmp" && mv "${ENV_FILE}.tmp" "$ENV_FILE"
 fi
 
-# 기본값을 먼저 채우고 나서 굳힙니다. **채우지 않으면 터미널에서 source 해도
+# **INSTALL_ROOT 는 여기 없습니다.** 위 주석 참고
+PERSIST_VARS=(AUDIO_GPU_TOKEN AUDIO_MODEL SPEACHES_PORT MANAGER_PORT
+              TUNNEL_TOKEN TUNNEL_HOSTNAME SPEACHES_DIR AUDIO_VAD_CPU
+              AUDIO_SPLIT AUDIO_SECTOR_SECONDS AUDIO_SECTOR_TOLERANCE
+              AUDIO_SECTOR_CONCURRENCY AUDIO_SILENCE_NOISE_DB AUDIO_SILENCE_MIN_SECONDS
+              MANAGER_UPSTREAM_TIMEOUT
+              HF_HOME HF_HUB_CACHE
+              WHISPER__COMPUTE_TYPE HF_TOKEN)
+
+# **defaults.sh 를 소스하기 전에** 진짜로 들어온 값을 기록합니다 (위 persist 주석).
+mark_env "${PERSIST_VARS[@]}"
+
+# 기본값을 채우고 나서 굳힙니다. **채우지 않으면 터미널에서 source 해도
 # AUDIO_MODEL 이 비어서, 손으로 치는 curl 이 조용히 깨집니다** — 실제로 걸렸습니다.
 # shellcheck disable=SC1090
 source "$AUDIO_ROOT/scripts/defaults.sh"
 
-# **INSTALL_ROOT 는 여기 없습니다.** 위 주석 참고
-for v in AUDIO_GPU_TOKEN AUDIO_MODEL SPEACHES_PORT MANAGER_PORT \
-         TUNNEL_TOKEN TUNNEL_HOSTNAME SPEACHES_DIR AUDIO_VAD_CPU \
-         HF_HOME HF_HUB_CACHE \
-         WHISPER__COMPUTE_TYPE HF_TOKEN; do
+for v in "${PERSIST_VARS[@]}"; do
     persist "$v"
 done
 persist AUDIO_ROOT

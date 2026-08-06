@@ -23,6 +23,10 @@ AUDIO_ROOT="${AUDIO_ROOT:-/workspace/chatos-audio}"
 
 BASE="http://127.0.0.1:$SPEACHES_PORT"
 
+# 인스턴스는 python3 인데 개발 PC(윈도우)는 python 뿐입니다. **로컬에서
+# 돌려볼 수 없으면 이 스크립트는 인스턴스에서 처음 돌아갑니다.**
+PY="$(command -v python3 || command -v python || true)"
+
 auth=()
 [ -n "$AUDIO_GPU_TOKEN" ] && auth=(-H "Authorization: Bearer $AUDIO_GPU_TOKEN")
 
@@ -148,6 +152,118 @@ print(d['text'][:300], file=sys.stderr)"
     echo "── 걸린 시간: $(( $(date +%s) - start ))초 → $out" >&2
     ;;
 
+compare)
+    # **2-9 대조 — 분할 있이/없이 같은 파일.**
+    #
+    # 이 명령이 존재하는 이유: 손으로 두 번 돌리고 눈으로 비교하면 **매번 다른
+    # 조건으로 재게 됩니다.** 같은 파일·같은 프롬프트를 두 경로에 태우고,
+    # 눈으로 보기 어려운 것(반복 환각)은 세어서 냅니다.
+    #
+    #   없이 = speaches 직접 (통짜)
+    #   있이 = 매니저 경유 — **매니저가 AUDIO_SPLIT=1 로 떠 있어야 합니다**
+    #
+    # 판정은 셋입니다 — 반복이 줄었나 · 경계에서 말이 깨졌나 · 91초 안인가.
+    f="${2:-}"
+    [ -n "$f" ] && [ -f "$f" ] || {
+        echo "사용법: chatos-audio compare <오디오파일> [프롬프트]" >&2; exit 1; }
+    prompt="${3:-}"
+    stem="${f%.*}"
+
+    mgr="http://127.0.0.1:${MANAGER_PORT:-8100}"
+    if ! curl -sS --max-time 3 "$mgr/health" >/dev/null 2>&1; then
+        echo "!! 매니저($mgr)가 응답하지 않습니다. 분할 쪽을 못 잽니다" >&2
+        exit 1
+    fi
+    if ! curl -sS --max-time 3 "$mgr/health" | grep -q '"split":true'; then
+        echo "!! 매니저가 AUDIO_SPLIT=0 으로 떠 있습니다. 두 쪽이 같은 결과가 나옵니다" >&2
+        echo "   AUDIO_SPLIT=1 을 /etc/chatos-audio.env 에 넣고 chatos-audio 를 다시 도세요" >&2
+        exit 1
+    fi
+
+    args=(-F "model=$AUDIO_MODEL" -F "response_format=verbose_json")
+    [ -n "$prompt" ] && args+=(-F "prompt=$prompt")
+
+    echo "── 없이 (통짜, speaches 직접) ──" >&2
+    t0=$(date +%s)
+    curl -sS "${auth[@]}" -F "file=@$f" "${args[@]}" \
+        "$BASE/v1/audio/transcriptions" > "$stem.whole.json"
+    whole_secs=$(( $(date +%s) - t0 ))
+    echo "   ${whole_secs}초 → $stem.whole.json" >&2
+
+    echo "── 있이 (분할, 매니저 경유) ──" >&2
+    t0=$(date +%s)
+    curl -sS "${auth[@]}" -F "file=@$f" "${args[@]}" \
+        "$mgr/v1/audio/transcriptions" > "$stem.split.json"
+    split_secs=$(( $(date +%s) - t0 ))
+    echo "   ${split_secs}초 → $stem.split.json" >&2
+
+    "$PY" - "$stem.whole.json" "$stem.split.json" "$whole_secs" "$split_secs" <<'PY'
+import json, re, sys
+from collections import Counter
+
+def load(path):
+    with open(path, encoding="utf-8") as fh:
+        d = json.load(fh)
+    if "text" not in d:
+        print(f"!! {path} 에 text 가 없습니다: {json.dumps(d, ensure_ascii=False)[:300]}")
+        sys.exit(1)
+    return d
+
+def repeats(text):
+    """연속 반복을 셉니다.
+
+    **환각의 대표 증상이 이것입니다** - 12차에서 `핵심폰드로 이사하고 그거를`
+    이 세 번 이어졌습니다. 어절 3개짜리 창을 밀면서 바로 다음에 같은 것이
+    또 오는 경우를 셉니다. 정상 발화에도 반복은 있으니 **0 이 목표가 아니라
+    두 쪽의 차이가 판정**입니다.
+    """
+    words = re.sub(r"\s+", " ", text).strip().split(" ")
+    grams = [" ".join(words[i:i+3]) for i in range(len(words) - 2)]
+    runs, worst, worst_gram = 0, 0, ""
+    i = 0
+    while i < len(grams) - 3:
+        if grams[i] == grams[i+3]:
+            n = 1
+            while i + 3*(n+1) < len(grams) and grams[i] == grams[i + 3*(n+1)]:
+                n += 1
+            runs += 1
+            if n + 1 > worst:
+                worst, worst_gram = n + 1, grams[i]
+            i += 3 * (n + 1)
+        else:
+            i += 1
+    return runs, worst, worst_gram
+
+whole, split = load(sys.argv[1]), load(sys.argv[2])
+w_secs, s_secs = int(sys.argv[3]), int(sys.argv[4])
+
+print()
+print(f"{'':14} {'없이(통짜)':>14} {'있이(분할)':>14}")
+print(f"{'-'*46}")
+print(f"{'처리 시간':14} {str(w_secs)+'초':>14} {str(s_secs)+'초':>14}")
+print(f"{'글자 수':14} {len(whole['text']):>14} {len(split['text']):>14}")
+print(f"{'세그먼트':14} {len(whole.get('segments') or []):>14} {len(split.get('segments') or []):>14}")
+print(f"{'duration':14} {str(whole.get('duration')):>14} {str(split.get('duration')):>14}")
+
+wr, ww, wg = repeats(whole["text"])
+sr, ss, sg = repeats(split["text"])
+print(f"{'반복 구간':14} {wr:>14} {sr:>14}")
+print(f"{'최대 연속반복':14} {str(ww)+'회':>14} {str(ss)+'회':>14}")
+print()
+if wg: print(f"  없이 최악: {wg[:60]}")
+if sg: print(f"  있이 최악: {sg[:60]}")
+
+print()
+print("판정 기준")
+print("  1. 반복이 줄었나          - 이게 분할을 되살린 근거입니다")
+print("  2. 처리 시간이 91초 안인가 - 품질이 좋아져도 넘기면 못 씁니다")
+print("  3. duration 이 같은가      - 다르면 차감이 틀어집니다")
+print("  4. 경계에서 말이 깨졌나    - **이건 눈으로 봐야 합니다.**")
+print("     매니저 로그의 경계 시각 근처를 두 파일에서 비교하세요")
+print("     (정각 절단 횟수도 로그에 있습니다 - 크면 무음 기준을 낮추세요)")
+PY
+    ;;
+
 logs)
     tail -f "$LOG_DIR"/*.log
     ;;
@@ -172,6 +288,8 @@ chatos-audio models              **받아둔** 로컬 모델
 chatos-audio pull [모델id]       모델 내려받기
 chatos-audio test <오디오파일>   전사 한 건 (stdout 은 순수 JSON)
 chatos-audio text <오디오파일>   전사 텍스트만 .txt 로 — **품질 볼 때**
+chatos-audio compare <파일> [프롬프트]
+                                 **분할 있이/없이 대조 (2-9).** 반복 환각을 세어서 냅니다
 chatos-audio logs                로그 따라가기
 chatos-audio stop                정지
 USAGE
