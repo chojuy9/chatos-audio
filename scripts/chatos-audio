@@ -107,14 +107,38 @@ print('받은 위치:', snapshot_download('$m'))"
     ;;
 
 test)
+    # **안내 문구는 stderr 로 냅니다.** stdout 은 순수 JSON 이어야 파이프에
+    # 태우거나 파일로 받을 수 있습니다.
     f="${2:-}"
-    [ -n "$f" ] && [ -f "$f" ] || { echo "사용법: chatos-audio test <오디오파일>"; exit 1; }
-    echo "모델 $AUDIO_MODEL · 파일 $f"
+    [ -n "$f" ] && [ -f "$f" ] || { echo "사용법: chatos-audio test <오디오파일>" >&2; exit 1; }
+    echo "모델 $AUDIO_MODEL · 파일 $f" >&2
     start=$(date +%s)
-    curl -fsS "${auth[@]}" \
+    curl -sS "${auth[@]}" \
         -F "file=@$f" -F "model=$AUDIO_MODEL" -F "response_format=verbose_json" \
-        "$BASE/v1/audio/transcriptions" | python3 -m json.tool
-    echo "── 걸린 시간: $(( $(date +%s) - start ))초"
+        "$BASE/v1/audio/transcriptions"
+    echo >&2
+    echo "── 걸린 시간: $(( $(date +%s) - start ))초" >&2
+    ;;
+
+text)
+    # 품질을 눈으로 볼 때. 전사 텍스트만 파일로 뽑습니다.
+    f="${2:-}"
+    [ -n "$f" ] && [ -f "$f" ] || { echo "사용법: chatos-audio text <오디오파일> [출력.txt]" >&2; exit 1; }
+    out="${3:-${f%.*}.txt}"
+    echo "모델 $AUDIO_MODEL · 파일 $f → $out" >&2
+    start=$(date +%s)
+    curl -sS "${auth[@]}" \
+        -F "file=@$f" -F "model=$AUDIO_MODEL" -F "response_format=verbose_json" \
+        "$BASE/v1/audio/transcriptions" \
+      | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+if 'text' not in d:
+    print('전사 실패:', json.dumps(d, ensure_ascii=False)[:500], file=sys.stderr); sys.exit(1)
+open('$out','w',encoding='utf-8').write(d['text'])
+print(f\"길이 {d.get('duration')}초 · 글자수 {len(d['text'])}\", file=sys.stderr)
+print(d['text'][:300], file=sys.stderr)"
+    echo "── 걸린 시간: $(( $(date +%s) - start ))초 → $out" >&2
     ;;
 
 logs)
@@ -139,7 +163,8 @@ chatos-audio status              응답 · 프로세스 · 로그 · GPU · HF �
 chatos-audio registry [검색어]   **내려받을 수 있는** 모델 (정확한 id 확인용)
 chatos-audio models              **받아둔** 로컬 모델
 chatos-audio pull [모델id]       모델 내려받기
-chatos-audio test <오디오파일>   전사 한 건 + 걸린 시간
+chatos-audio test <오디오파일>   전사 한 건 (stdout 은 순수 JSON)
+chatos-audio text <오디오파일>   전사 텍스트만 .txt 로 — **품질 볼 때**
 chatos-audio logs                로그 따라가기
 chatos-audio stop                정지
 USAGE
