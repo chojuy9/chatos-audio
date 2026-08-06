@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+#
+# chatos-audio — 인스턴스에서 쓰는 명령
+#
+#   chatos-audio          최신으로 받고 설치·실행 (몇 번을 쳐도 안전)
+#   chatos-audio status   speaches·터널 응답, 최근 로그
+#   chatos-audio models   speaches 가 쓸 수 있는 모델 목록
+#   chatos-audio test     한국어 오디오 한 건 전사 (인자로 파일 경로)
+#   chatos-audio logs     로그 따라가기 (Ctrl+C 로 나옴)
+#   chatos-audio stop     정지
+
+set -uo pipefail
+
+WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
+LOG_DIR="$WORKSPACE_DIR/logs"
+RUN_DIR="$WORKSPACE_DIR/run"
+ENV_FILE="/etc/chatos-audio.env"
+# shellcheck disable=SC1090
+[ -f "$ENV_FILE" ] && source "$ENV_FILE"
+
+INSTALL_ROOT="${INSTALL_ROOT:-/workspace/chatos-audio}"
+SPEACHES_PORT="${SPEACHES_PORT:-8000}"
+AUDIO_MODEL="${AUDIO_MODEL:-Systran/faster-whisper-large-v3}"
+AUDIO_GPU_TOKEN="${AUDIO_GPU_TOKEN:-}"
+BASE="http://127.0.0.1:$SPEACHES_PORT"
+
+auth=()
+[ -n "$AUDIO_GPU_TOKEN" ] && auth=(-H "Authorization: Bearer $AUDIO_GPU_TOKEN")
+
+case "${1:-run}" in
+
+run)
+    exec bash "$INSTALL_ROOT/go.sh"
+    ;;
+
+status)
+    echo "── speaches ──"
+    if curl -fsS --max-time 5 "$BASE/health" >/dev/null 2>&1; then
+        echo "  health   200"
+    else
+        echo "  health   응답 없음"
+    fi
+    for n in speaches tunnel; do
+        p="$RUN_DIR/$n.pid"
+        if [ -f "$p" ] && kill -0 "$(cat "$p")" 2>/dev/null; then
+            echo "  $n  PID $(cat "$p")  살아 있음"
+        else
+            echo "  $n  없음"
+        fi
+    done
+
+    echo
+    echo "── 로그 (없으면 그 앞 단계에서 멈춘 것) ──"
+    for f in install.log speaches.log warmup.log tunnel.log; do
+        if [ -f "$LOG_DIR/$f" ]; then
+            printf "  %-14s %s\n" "$f" "$(wc -l <"$LOG_DIR/$f") 줄"
+        else
+            printf "  %-14s **없음**\n" "$f"
+        fi
+    done
+
+    echo
+    echo "── GPU ──"
+    nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu \
+        --format=csv,noheader 2>/dev/null || echo "  nvidia-smi 없음"
+    ;;
+
+models)
+    curl -fsS "${auth[@]}" "$BASE/v1/models" | python3 -m json.tool
+    ;;
+
+test)
+    f="${2:-}"
+    [ -n "$f" ] && [ -f "$f" ] || { echo "사용법: chatos-audio test <오디오파일>"; exit 1; }
+    echo "모델 $AUDIO_MODEL · 파일 $f"
+    start=$(date +%s)
+    curl -fsS "${auth[@]}" \
+        -F "file=@$f" -F "model=$AUDIO_MODEL" -F "response_format=verbose_json" \
+        "$BASE/v1/audio/transcriptions" | python3 -m json.tool
+    echo "── 걸린 시간: $(( $(date +%s) - start ))초"
+    ;;
+
+logs)
+    tail -f "$LOG_DIR"/*.log
+    ;;
+
+stop)
+    for n in speaches tunnel; do
+        p="$RUN_DIR/$n.pid"
+        if [ -f "$p" ]; then
+            pid="$(cat "$p")"
+            kill "$pid" 2>/dev/null && echo "$n 정지 (PID $pid)"
+            rm -f "$p"
+        fi
+    done
+    ;;
+
+*)
+    echo "chatos-audio [run|status|models|test <파일>|logs|stop]"
+    exit 1
+    ;;
+esac
