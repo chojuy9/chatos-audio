@@ -62,18 +62,59 @@ UV="$(find_uv || true)"
 # **자기 프로세스 그룹은 건드리지 않습니다.** 5차 2-2 에서 정리 코드가
 # 실행 직전에 자기를 죽인 적이 있습니다. 이름으로만 좁게 잡습니다.
 
+# **죽으라고 신호를 보내는 것과 죽은 것은 다릅니다.**
+# kill 만 하고 바로 다음으로 가면, 종료 중인 옛 프로세스가 아직 포트를 쥐고
+# 있어서 새 프로세스가 바인드에 실패합니다. 그런데 health 검사는 **옛
+# 프로세스한테서 200 을 받아** 통과해버립니다 — 도구가 거짓말하는 자리입니다.
 stop_one() {
-    local pidfile="$RUN_DIR/$1.pid"
+    local name="$1" pidfile="$RUN_DIR/$1.pid" pid
     [ -f "$pidfile" ] || return 0
-    local pid; pid="$(cat "$pidfile" 2>/dev/null || true)"
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-        log "이전 $1 정지 (PID $pid)"
-        kill "$pid" 2>/dev/null || true
-    fi
+    pid="$(cat "$pidfile" 2>/dev/null || true)"
     rm -f "$pidfile"
+    [ -n "$pid" ] || return 0
+    kill -0 "$pid" 2>/dev/null || return 0
+
+    log "이전 $name 정지 (PID $pid)"
+    kill "$pid" 2>/dev/null || true
+    for _ in $(seq 1 30); do
+        kill -0 "$pid" 2>/dev/null || { log "  종료 확인"; return 0; }
+        sleep 1
+    done
+    log "  30초 안에 안 죽어서 SIGKILL"
+    kill -9 "$pid" 2>/dev/null || true
+    sleep 1
 }
+
+# 포트가 실제로 비었는지 확인합니다. 프로세스가 죽어도 소켓이 잠깐 남습니다.
+port_free() {
+    python3 - "$1" <<'PY' 2>/dev/null
+import socket, sys
+s = socket.socket()
+try:
+    s.bind(("127.0.0.1", int(sys.argv[1])))
+except OSError:
+    sys.exit(1)
+finally:
+    s.close()
+PY
+}
+
 stop_one speaches
 stop_one tunnel
+
+log "포트 $SPEACHES_PORT 가 비기를 기다립니다"
+freed=0
+for _ in $(seq 1 30); do
+    if port_free "$SPEACHES_PORT"; then freed=1; break; fi
+    sleep 1
+done
+if [ "$freed" -ne 1 ]; then
+    log "⚠ 포트 $SPEACHES_PORT 를 아직 누가 쥐고 있습니다"
+    log "   남은 프로세스: $(pgrep -af 'uvicorn|speaches' | tr '\n' ' ' || true)"
+    log "   그대로 띄우면 바인드에 실패하고, health 검사가 옛 프로세스한테 속습니다"
+    exit 1
+fi
+log "포트 비었음"
 
 # ── 2. speaches ───────────────────────────────────────────────────
 #
@@ -174,18 +215,34 @@ fi
 
 if [ -f "$WARM" ]; then
     log "워밍업 — 모델 $AUDIO_MODEL (첫 적재라 좀 걸립니다)"
+
+    # **본문과 stderr 를 같은 파일에 쓰면 안 됩니다.** 연결 자체가 실패하면
+    # 본문이 안 써져서 지난 실행의 내용이 그대로 남고, 그게 이번 오류처럼
+    # 보입니다. 파일을 나누고 매번 비웁니다.
+    : > "$LOG_DIR/warmup.log"
+    : > "$LOG_DIR/warmup.err"
+
     code="$(curl -sS --max-time 900 -o "$LOG_DIR/warmup.log" -w '%{http_code}' \
         "${auth[@]}" \
         -F "file=@$WARM" -F "model=$AUDIO_MODEL" \
-        "http://127.0.0.1:$SPEACHES_PORT/v1/audio/transcriptions" 2>>"$LOG_DIR/warmup.log")"
+        "http://127.0.0.1:$SPEACHES_PORT/v1/audio/transcriptions" 2>"$LOG_DIR/warmup.err")"
+
     if [ "$code" = "200" ]; then
         log "워밍업 통과 (HTTP 200) → $LOG_DIR/warmup.log"
+        head -c 300 "$LOG_DIR/warmup.log" | sed 's/^/      /'
+        echo
     else
         log "⚠ 워밍업 실패 — HTTP $code"
-        head -c 600 "$LOG_DIR/warmup.log" 2>/dev/null | sed 's/^/      /'
+        [ -s "$LOG_DIR/warmup.err" ] && sed 's/^/      curl: /' "$LOG_DIR/warmup.err"
+        [ -s "$LOG_DIR/warmup.log" ] && head -c 600 "$LOG_DIR/warmup.log" | sed 's/^/      /'
         echo
-        log "  speaches.log 의 트레이스백을 보세요: tail -n 40 $LOG_DIR/speaches.log"
-        log "  CacheNotFound 면 모델이 안 받아진 것입니다 — bootstrap 을 다시 돌리세요"
+        case "$code" in
+            000) log "  응답 자체가 없습니다 — speaches 가 죽었을 가능성이 큽니다"
+                 log "  tail -n 40 $LOG_DIR/speaches.log" ;;
+            500) log "  CacheNotFound 면 모델이 안 받아진 것입니다 — chatos-audio pull" ;;
+            401|403) log "  AUDIO_GPU_TOKEN 이 speaches 의 API_KEY 와 다릅니다" ;;
+            *)   log "  tail -n 40 $LOG_DIR/speaches.log" ;;
+        esac
     fi
 else
     log "워밍업 파일이 없어 건너뜁니다"

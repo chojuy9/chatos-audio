@@ -53,7 +53,7 @@ status)
 
     echo
     echo "── 로그 (없으면 그 앞 단계에서 멈춘 것) ──"
-    for f in install.log speaches.log warmup.log tunnel.log; do
+    for f in install.log speaches.log warmup.log warmup.err tunnel.log; do
         if [ -f "$LOG_DIR/$f" ]; then
             printf "  %-14s %s\n" "$f" "$(wc -l <"$LOG_DIR/$f") 줄"
         else
