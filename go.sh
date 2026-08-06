@@ -103,7 +103,13 @@ if [ -d "$AUDIO_ROOT/.git" ]; then
     esac
 fi
 
-chmod +x "$AUDIO_ROOT"/go.sh "$AUDIO_ROOT"/scripts/*.sh 2>/dev/null || true
+# **`chmod +x` 를 하지 않습니다.** git 이 실행 비트를 추적하기 때문에, 클론 뒤
+# chmod 를 돌리면 그 파일들이 "로컬 변경" 이 되어 다음 `git pull` 이 거부됩니다
+# (4차 5장에서 이미 한 번 겪은 것). 그리고 필요도 없습니다 —
+#   scripts/bootstrap.sh · run.sh  → `bash <파일>` 로 부릅니다
+#   scripts/chatos-audio           → `install -m 755` 로 복사합니다
+#   go.sh 자신                     → On-start 도 `bash go.sh` 입니다
+# 실행 비트가 있어야 하는 파일이 하나도 없습니다.
 
 # ── 3. 명령 설치 ──────────────────────────────────────────────────
 

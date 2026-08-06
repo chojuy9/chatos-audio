@@ -93,6 +93,14 @@ speaches  127.0.0.1:8000   ← 밖에서 직접 못 닿습니다
 | `warmup.log` | speaches 가 health 까지 못 간 것 |
 | `tunnel.log` | 터널을 안 띄운 것 (`TUNNEL_TOKEN` 이 없으면 정상) |
 
+**갱신은 `git pull` 말고 `chatos-audio` 를 쓰세요.** `go.sh` 가 `fetch` + `reset --hard origin/main` 으로 원격 상태를 통째로 덮어씁니다. 인스턴스는 쓰고 버리는 것이라 로컬 변경을 지킬 이유가 없고, 덕분에 충돌이 안 납니다. `git pull` 로 막혔다면:
+
+```bash
+cd /workspace/chatos-audio && git fetch origin main && git reset --hard origin/main
+```
+
+> **`chmod +x` 를 스크립트에서 돌리지 마세요.** git 이 실행 비트를 추적해서, chmod 한 파일이 "로컬 변경" 이 되어 다음 pull 을 막습니다 (4차 5장). 이 저장소는 실행 비트가 필요한 파일이 없습니다 — 전부 `bash <파일>` 이나 `install -m 755` 로 처리합니다.
+
 **설치의 성공 종료 코드를 믿지 마세요.** `uv sync` 는 의존성 충돌을 경고로만 찍고 0 을 돌려줍니다. 판정은 `bootstrap.sh` 의 임포트 검사(`ctranslate2` · `faster_whisper` · `speaches.main`)가 합니다.
 
 **speaches 는 모델을 자동으로 안 받습니다 — 이게 함정입니다.** 로컬 HF 캐시를 찾고 없으면 `CacheNotFound` 로 **500** 을 냅니다. 캐시 디렉터리 자체가 없으면 `/v1/models` 도 같이 500 이고요. 그래서 `bootstrap.sh` 가 캐시를 만들고 모델을 명시적으로 받습니다.
