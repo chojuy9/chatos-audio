@@ -18,7 +18,9 @@ ENV_FILE="/etc/chatos-audio.env"
 # shellcheck disable=SC1090
 [ -f "$ENV_FILE" ] && source "$ENV_FILE"
 
-INSTALL_ROOT="${INSTALL_ROOT:-/workspace/chatos-audio}"
+# **INSTALL_ROOT 를 쓰지 않습니다.** 이미지 생성 쪽 계정 환경변수가 그 이름을
+# 점유하고 있어서, 쓰면 /workspace/chatos-image 를 가리킵니다.
+AUDIO_ROOT="${AUDIO_ROOT:-/workspace/chatos-audio}"
 SPEACHES_PORT="${SPEACHES_PORT:-8000}"
 AUDIO_MODEL="${AUDIO_MODEL:-Systran/faster-whisper-large-v3}"
 AUDIO_GPU_TOKEN="${AUDIO_GPU_TOKEN:-}"
@@ -30,7 +32,7 @@ auth=()
 case "${1:-run}" in
 
 run)
-    exec bash "$INSTALL_ROOT/go.sh"
+    exec bash "$AUDIO_ROOT/go.sh"
     ;;
 
 status)

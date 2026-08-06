@@ -12,7 +12,19 @@
 
 set -uo pipefail
 
-INSTALL_ROOT="${INSTALL_ROOT:-/workspace/chatos-audio}"
+# ── 자기 위치에서 구합니다 — 환경변수를 믿지 않습니다 ────────────
+#
+# **`INSTALL_ROOT` 를 쓰면 안 됩니다.** Vast 계정 환경변수는 그 계정의
+# **모든 인스턴스**에 들어오는데, 이미지 생성 쪽이 이미
+# `INSTALL_ROOT=/workspace/chatos-image` 를 점유하고 있습니다
+# (`GPU-원터치-명령어.md` 2-1). 그대로 쓰면 음성 인스턴스가 이미지 저장소를
+# 가리키고, 최악의 경우 2번의 `git reset --hard` 가 **남의 저장소를 덮어씁니다.**
+#
+# 그래서 위치는 이 파일이 어디 있는지로만 정합니다. 환경변수로 못 바꿉니다.
+
+AUDIO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export AUDIO_ROOT
+
 WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
 LOG_DIR="$WORKSPACE_DIR/logs"
 ENV_FILE="/etc/chatos-audio.env"
@@ -20,6 +32,11 @@ ENV_FILE="/etc/chatos-audio.env"
 mkdir -p "$LOG_DIR"
 
 log() { echo "[go $(date -u '+%H:%M:%S')] $*"; }
+
+log "저장소 위치: $AUDIO_ROOT"
+if [ -n "${INSTALL_ROOT:-}" ]; then
+    log "  (계정 환경변수 INSTALL_ROOT=$INSTALL_ROOT 은 이미지 쪽 값이라 무시합니다)"
+fi
 
 # ── 1. 계정 환경변수를 파일로 굳힙니다 ────────────────────────────
 #
@@ -41,14 +58,26 @@ persist() {
 touch "$ENV_FILE"
 chmod 600 "$ENV_FILE"   # 토큰이 들어갑니다
 
+# 이전 판이 남긴 INSTALL_ROOT 줄을 걷어냅니다. 안 지우면 source 할 때마다
+# 이미지 쪽 경로가 되살아납니다.
+if grep -q '^export INSTALL_ROOT=' "$ENV_FILE" 2>/dev/null; then
+    log "환경 파일에서 낡은 INSTALL_ROOT 줄을 지웁니다"
+    grep -v '^export INSTALL_ROOT=' "$ENV_FILE" > "${ENV_FILE}.tmp" && mv "${ENV_FILE}.tmp" "$ENV_FILE"
+fi
+
+# **INSTALL_ROOT 는 여기 없습니다.** 위 주석 참고
 for v in AUDIO_GPU_TOKEN AUDIO_MODEL SPEACHES_PORT MANAGER_PORT \
-         TUNNEL_TOKEN TUNNEL_HOSTNAME INSTALL_ROOT SPEACHES_DIR \
+         TUNNEL_TOKEN TUNNEL_HOSTNAME SPEACHES_DIR \
          WHISPER__COMPUTE_TYPE HF_TOKEN; do
     persist "$v"
 done
+persist AUDIO_ROOT
 
 # shellcheck disable=SC1090
 source "$ENV_FILE"
+
+# source 가 덮어썼을 수 있으니 자기 위치로 되돌립니다. 이 값이 이깁니다.
+AUDIO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log "환경 파일: $ENV_FILE"
 
@@ -57,19 +86,29 @@ log "환경 파일: $ENV_FILE"
 # pull 이 아니라 원격 상태로 덮어씁니다. 인스턴스는 쓰고 버리는 것이라
 # 로컬 변경을 지킬 이유가 없고, 덕분에 충돌이 안 납니다 (이미지 쪽과 동일).
 
-if [ -d "$INSTALL_ROOT/.git" ]; then
-    log "저장소 갱신"
-    git -C "$INSTALL_ROOT" fetch --depth 1 origin main >>"$LOG_DIR/install.log" 2>&1 \
-        && git -C "$INSTALL_ROOT" reset --hard origin/main >>"$LOG_DIR/install.log" 2>&1 \
-        || log "갱신 실패 — 있는 것으로 계속합니다"
+# 원격이 chatos-audio 인지 확인하고 나서만 덮어씁니다. 엉뚱한 저장소에서
+# reset --hard 를 돌리면 남의 작업이 날아갑니다.
+if [ -d "$AUDIO_ROOT/.git" ]; then
+    origin="$(git -C "$AUDIO_ROOT" remote get-url origin 2>/dev/null || true)"
+    case "$origin" in
+        *chatos-audio*)
+            log "저장소 갱신 ($origin)"
+            git -C "$AUDIO_ROOT" fetch --depth 1 origin main >>"$LOG_DIR/install.log" 2>&1 \
+                && git -C "$AUDIO_ROOT" reset --hard origin/main >>"$LOG_DIR/install.log" 2>&1 \
+                || log "갱신 실패 — 있는 것으로 계속합니다"
+            ;;
+        *)
+            log "origin 이 chatos-audio 가 아닙니다 ($origin) — 갱신을 건너뜁니다"
+            ;;
+    esac
 fi
 
-chmod +x "$INSTALL_ROOT"/go.sh "$INSTALL_ROOT"/scripts/*.sh 2>/dev/null || true
+chmod +x "$AUDIO_ROOT"/go.sh "$AUDIO_ROOT"/scripts/*.sh 2>/dev/null || true
 
 # ── 3. 명령 설치 ──────────────────────────────────────────────────
 
-if [ -f "$INSTALL_ROOT/scripts/chatos-audio" ]; then
-    install -m 755 "$INSTALL_ROOT/scripts/chatos-audio" /usr/local/bin/chatos-audio
+if [ -f "$AUDIO_ROOT/scripts/chatos-audio" ]; then
+    install -m 755 "$AUDIO_ROOT/scripts/chatos-audio" /usr/local/bin/chatos-audio
     log "chatos-audio 명령 설치됨"
 fi
 
@@ -82,7 +121,7 @@ fi
 # `kill -- -$pgid` 가 자기 프로세스 그룹을 죽여 실행 직전에 자살한 적이
 # 있습니다. 여기서는 그 경로 자체를 만들지 않습니다.
 
-bash "$INSTALL_ROOT/scripts/bootstrap.sh" 2>&1 | tee -a "$LOG_DIR/install.log"
+bash "$AUDIO_ROOT/scripts/bootstrap.sh" 2>&1 | tee -a "$LOG_DIR/install.log"
 rc="${PIPESTATUS[0]}"
 
 if [ "$rc" -ne 0 ]; then
@@ -90,4 +129,4 @@ if [ "$rc" -ne 0 ]; then
     exit "$rc"
 fi
 
-exec bash "$INSTALL_ROOT/scripts/run.sh"
+exec bash "$AUDIO_ROOT/scripts/run.sh"
