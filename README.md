@@ -22,12 +22,14 @@ bash /workspace/chatos-audio/go.sh
 그다음부터는 인스턴스에서 한 마디입니다.
 
 ```
-chatos-audio                 최신으로 받고 설치·실행 (몇 번을 쳐도 안전)
-chatos-audio status          speaches 응답 · 프로세스 · 로그 · GPU
-chatos-audio models          쓸 수 있는 모델 목록
-chatos-audio test 파일.mp3   전사 한 건 + 걸린 시간
-chatos-audio logs            로그 따라가기
-chatos-audio stop            정지
+chatos-audio                     최신으로 받고 설치·실행 (몇 번을 쳐도 안전)
+chatos-audio status              응답 · 프로세스 · 로그 · HF 캐시 · GPU
+chatos-audio registry [검색어]   **내려받을 수 있는** 모델 (정확한 id 확인용)
+chatos-audio models              **받아둔** 로컬 모델
+chatos-audio pull [모델id]       모델 내려받기
+chatos-audio test <오디오파일>   전사 한 건 + 걸린 시간
+chatos-audio logs                로그 따라가기
+chatos-audio stop                정지
 ```
 
 ---
@@ -56,7 +58,7 @@ speaches  127.0.0.1:8000   ← 밖에서 직접 못 닿습니다
 | 이름 | 필수 | 내용 |
 |---|---|---|
 | `AUDIO_GPU_TOKEN` | **터널을 붙이면 필수** | GPU 앞단 인증. Worker 의 같은 이름 시크릿과 **같은 값** |
-| `AUDIO_MODEL` | | whisper 모델 id. 기본 `Systran/faster-whisper-large-v3-turbo` |
+| `AUDIO_MODEL` | | whisper 모델 id. 기본 `deepdml/faster-whisper-large-v3-turbo-ct2` |
 | `TUNNEL_TOKEN` | | 있으면 cloudflared 를 같이 띄웁니다. 없으면 로컬 전용 |
 | `SPEACHES_PORT` | | 기본 8000. **8080 은 Jupyter 와 충돌해서 거부됩니다** |
 | `WHISPER__COMPUTE_TYPE` | | speaches 설정. 중첩 설정은 이중 밑줄입니다 |
@@ -93,7 +95,17 @@ speaches  127.0.0.1:8000   ← 밖에서 직접 못 닿습니다
 
 **설치의 성공 종료 코드를 믿지 마세요.** `uv sync` 는 의존성 충돌을 경고로만 찍고 0 을 돌려줍니다. 판정은 `bootstrap.sh` 의 임포트 검사(`ctranslate2` · `faster_whisper` · `speaches.main`)가 합니다.
 
-**워밍업이 모델 프리다운로드를 겸합니다.** 1초 무음을 전사시켜 모델을 미리 끌어오고, 동시에 경로 전체가 도는지 확인합니다. 여기가 통과하면 STT 는 실제로 되는 것입니다.
+**speaches 는 모델을 자동으로 안 받습니다 — 이게 함정입니다.** 로컬 HF 캐시를 찾고 없으면 `CacheNotFound` 로 **500** 을 냅니다. 캐시 디렉터리 자체가 없으면 `/v1/models` 도 같이 500 이고요. 그래서 `bootstrap.sh` 가 캐시를 만들고 모델을 명시적으로 받습니다.
+
+```
+huggingface_hub.errors.CacheNotFound: Cache directory not found: /workspace/.hf_home/hub
+```
+
+이게 보이면 모델이 안 받아진 것입니다 — `chatos-audio pull`.
+
+**`bootstrap.sh` 와 `run.sh` 의 HF 캐시 경로가 같아야 합니다.** 어긋나면 받아둔 모델을 speaches 가 못 찾고 같은 500 이 납니다.
+
+**워밍업이 첫 추론까지 밀어봅니다.** 여기가 통과하면 STT 는 실제로 되는 것이고, **CUDA/cuDNN 궁합도 여기서 갈립니다** — 모델을 적재해야 나오는 종류라 내려받기만으로는 안 드러납니다.
 
 ---
 

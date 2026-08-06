@@ -22,7 +22,7 @@ ENV_FILE="/etc/chatos-audio.env"
 # 점유하고 있어서, 쓰면 /workspace/chatos-image 를 가리킵니다.
 AUDIO_ROOT="${AUDIO_ROOT:-/workspace/chatos-audio}"
 SPEACHES_PORT="${SPEACHES_PORT:-8000}"
-AUDIO_MODEL="${AUDIO_MODEL:-Systran/faster-whisper-large-v3-turbo}"
+AUDIO_MODEL="${AUDIO_MODEL:-deepdml/faster-whisper-large-v3-turbo-ct2}"
 AUDIO_GPU_TOKEN="${AUDIO_GPU_TOKEN:-}"
 BASE="http://127.0.0.1:$SPEACHES_PORT"
 
@@ -62,13 +62,51 @@ status)
     done
 
     echo
+    echo "── HF 캐시 ──"
+    hub="${HF_HUB_CACHE:-${HF_HOME:-/workspace/.hf_home}/hub}"
+    if [ -d "$hub" ]; then
+        echo "  $hub  ($(du -sh "$hub" 2>/dev/null | cut -f1))"
+        find "$hub" -maxdepth 1 -name 'models--*' -printf '    %f\n' 2>/dev/null | head -10
+        [ -z "$(find "$hub" -maxdepth 1 -name 'models--*' 2>/dev/null)" ] \
+            && echo "    **받아둔 모델 없음** — chatos-audio pull"
+    else
+        echo "  $hub  **없음** — 이러면 /v1/models 도 500 입니다"
+    fi
+
+    echo
     echo "── GPU ──"
     nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu \
         --format=csv,noheader 2>/dev/null || echo "  nvidia-smi 없음"
     ;;
 
 models)
-    curl -fsS "${auth[@]}" "$BASE/v1/models" | python3 -m json.tool
+    # 로컬 캐시에 **받아둔** 모델입니다. 비어 있으면 아직 안 받은 것이고,
+    # speaches 는 요청이 와도 자동으로 받지 않습니다 — 500 CacheNotFound 가 납니다.
+    curl -sS -w '\n[HTTP %{http_code}]\n' "${auth[@]}" "$BASE/v1/models"
+    ;;
+
+registry)
+    # 내려받을 수 있는 모델 목록. 여기서 정확한 id 를 확인하세요.
+    curl -sS "${auth[@]}" "$BASE/v1/registry" \
+        | python3 -c 'import json,sys
+d=json.load(sys.stdin)
+items=d.get("data", d if isinstance(d,list) else [])
+q=(sys.argv[1] if len(sys.argv)>1 else "").lower()
+for m in items:
+    i=m.get("id","") if isinstance(m,dict) else str(m)
+    if not q or q in i.lower(): print(i)' "${2:-}"
+    ;;
+
+pull)
+    m="${2:-$AUDIO_MODEL}"
+    echo "내려받기: $m"
+    cd "${SPEACHES_DIR:-/workspace/speaches}" || exit 1
+    HF_HOME="${HF_HOME:-/workspace/.hf_home}" \
+    HF_HUB_CACHE="${HF_HUB_CACHE:-/workspace/.hf_home/hub}" \
+        uv run python -c "
+import sys
+from huggingface_hub import snapshot_download
+print('받은 위치:', snapshot_download('$m'))"
     ;;
 
 test)
@@ -98,7 +136,16 @@ stop)
     ;;
 
 *)
-    echo "chatos-audio [run|status|models|test <파일>|logs|stop]"
+    cat <<'USAGE'
+chatos-audio                     최신으로 받고 설치·실행
+chatos-audio status              응답 · 프로세스 · 로그 · GPU · HF 캐시
+chatos-audio registry [검색어]   **내려받을 수 있는** 모델 (정확한 id 확인용)
+chatos-audio models              **받아둔** 로컬 모델
+chatos-audio pull [모델id]       모델 내려받기
+chatos-audio test <오디오파일>   전사 한 건 + 걸린 시간
+chatos-audio logs                로그 따라가기
+chatos-audio stop                정지
+USAGE
     exit 1
     ;;
 esac

@@ -118,11 +118,50 @@ else
     mkdir -p "$RC_DIR"
 fi
 
-# ── 6. 워밍업 파일 ────────────────────────────────────────────────
+# ── 6. 모델 내려받기 — **선택이 아니라 필수입니다** ─────────────
 #
-# 1초짜리 무음. run.sh 가 이걸로 모델을 미리 끌어옵니다.
-# **첫 이용자가 1.6GB 내려받기를 기다리지 않게 하는 것**이 목적이고,
-# 덤으로 경로 전체가 도는지 확인됩니다.
+# speaches 는 요청이 오면 모델을 자동으로 받지 않습니다. 로컬 HF 캐시를
+# 찾고 없으면 500 을 냅니다 —
+#
+#   speaches/routers/utils.py  get_model_card_data_or_raise()
+#     → hf_utils.get_model_repo_path()
+#       → huggingface_hub.CacheNotFound: Cache directory not found: .../hub
+#
+# 캐시 디렉터리 자체가 없으면 `/v1/models`(로컬 목록)도 같이 500 입니다.
+# 그래서 **디렉터리를 만들고 모델을 미리 받는 것**이 설치의 일부입니다.
+
+export HF_HOME="${HF_HOME:-$WORKSPACE_DIR/.hf_home}"
+export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
+mkdir -p "$HF_HUB_CACHE"
+log "HF 캐시: $HF_HUB_CACHE"
+
+AUDIO_MODEL="${AUDIO_MODEL:-deepdml/faster-whisper-large-v3-turbo-ct2}"
+
+# 이미 받았으면 건너뜁니다. 캐시 디렉터리 이름은 huggingface_hub 규칙을 따릅니다.
+model_dir="$HF_HUB_CACHE/models--${AUDIO_MODEL//\//--}"
+if [ -d "$model_dir" ]; then
+    log "모델 이미 있음: $AUDIO_MODEL"
+else
+    log "모델 내려받기: $AUDIO_MODEL (수 분 걸립니다)"
+    if ! "$UV" run python - "$AUDIO_MODEL" <<'PY' >>"$LOG_DIR/install.log" 2>&1
+import sys
+from huggingface_hub import snapshot_download
+p = snapshot_download(sys.argv[1])
+print("받은 위치:", p)
+PY
+    then
+        echo "--- 마지막 20줄 ---"
+        tail -n 20 "$LOG_DIR/install.log"
+        die "모델 내려받기 실패: $AUDIO_MODEL — id 가 맞는지 확인하세요 (chatos-audio registry)"
+    fi
+    log "모델 내려받기 완료"
+fi
+
+# ── 7. 워밍업 파일 ────────────────────────────────────────────────
+#
+# 1초짜리 무음. run.sh 가 이걸로 첫 추론까지 밀어봅니다 — 여기가 통과하면
+# STT 는 실제로 되는 것입니다. **CUDA/cuDNN 문제는 여기서 드러납니다**
+# (모델을 적재해야 나오는 종류라 내려받기만으로는 안 갈립니다).
 
 WARM="$WORKSPACE_DIR/warmup.wav"
 if [ ! -f "$WARM" ]; then

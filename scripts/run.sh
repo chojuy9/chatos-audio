@@ -20,7 +20,7 @@ mkdir -p "$LOG_DIR" "$RUN_DIR"
 
 SPEACHES_DIR="${SPEACHES_DIR:-$WORKSPACE_DIR/speaches}"
 SPEACHES_PORT="${SPEACHES_PORT:-8000}"
-AUDIO_MODEL="${AUDIO_MODEL:-Systran/faster-whisper-large-v3-turbo}"
+AUDIO_MODEL="${AUDIO_MODEL:-deepdml/faster-whisper-large-v3-turbo-ct2}"
 AUDIO_GPU_TOKEN="${AUDIO_GPU_TOKEN:-}"
 TUNNEL_TOKEN="${TUNNEL_TOKEN:-}"
 WARM="$WORKSPACE_DIR/warmup.wav"
@@ -90,6 +90,12 @@ export UVICORN_PORT="$SPEACHES_PORT"
 [ -n "$AUDIO_GPU_TOKEN" ] && export API_KEY="$AUDIO_GPU_TOKEN"
 [ -n "${WHISPER__COMPUTE_TYPE:-}" ] && export WHISPER__COMPUTE_TYPE
 
+# **HF 캐시 위치를 bootstrap 과 반드시 맞춰야 합니다.** 어긋나면 받아둔
+# 모델을 speaches 가 못 찾고 CacheNotFound 로 500 을 냅니다.
+export HF_HOME="${HF_HOME:-$WORKSPACE_DIR/.hf_home}"
+export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
+mkdir -p "$HF_HUB_CACHE"
+
 log "speaches 시작 — 127.0.0.1:$SPEACHES_PORT · cwd $SPEACHES_DIR"
 [ -n "$AUDIO_GPU_TOKEN" ] || log "  ⚠ AUDIO_GPU_TOKEN 이 비었습니다 — 인증 없이 뜹니다. 터널을 붙이기 전에 채우세요"
 
@@ -133,16 +139,33 @@ log "health 200"
 auth=()
 [ -n "$AUDIO_GPU_TOKEN" ] && auth=(-H "Authorization: Bearer $AUDIO_GPU_TOKEN")
 
-log "쓸 수 있는 모델:"
-curl -fsS "${auth[@]}" "http://127.0.0.1:$SPEACHES_PORT/v1/models" 2>/dev/null \
-    | python3 -c 'import json,sys
-try:
-    d=json.load(sys.stdin)
-    for m in d.get("data", d if isinstance(d,list) else []):
-        print("   ", m.get("id", m))
-except Exception as e:
-    print("    (읽지 못했습니다:", e, ")")' 2>/dev/null \
-    || log "    (모델 목록 조회 실패)"
+# **`curl -f` 를 쓰지 않습니다.** -f 는 오류 본문을 버려서 "실패했다" 만 남기고
+# 왜 실패했는지를 지웁니다. 상태 코드와 본문을 같이 봅니다.
+show() {  # show <설명> <URL>
+    local body code
+    body="$(curl -sS -w '\n%{http_code}' "${auth[@]}" "$2" 2>&1)"
+    code="$(printf '%s' "$body" | tail -n1)"
+    body="$(printf '%s' "$body" | sed '$d')"
+    if [ "$code" = "200" ]; then
+        printf '%s' "$body"
+        return 0
+    fi
+    log "$1 실패 — HTTP $code"
+    printf '%s\n' "$body" | head -n 5 | sed 's/^/      /'
+    return 1
+}
+
+log "쓸 수 있는 모델 (로컬 캐시):"
+if models_json="$(show '모델 목록' "http://127.0.0.1:$SPEACHES_PORT/v1/models")"; then
+    printf '%s' "$models_json" | python3 -c 'import json,sys
+d=json.load(sys.stdin)
+items=d.get("data", d if isinstance(d,list) else [])
+if not items:
+    print("    (비어 있음 — 내려받은 모델이 없습니다)")
+for m in items:
+    print("   ", m.get("id", m) if isinstance(m, dict) else m)' 2>/dev/null \
+        || log "    (JSON 을 읽지 못했습니다)"
+fi
 
 # ── 5. 워밍업 ─────────────────────────────────────────────────────
 #
@@ -150,16 +173,19 @@ except Exception as e:
 # 도는지 확인됩니다 — 여기가 통과하면 STT 는 실제로 됩니다.
 
 if [ -f "$WARM" ]; then
-    log "워밍업 — 모델 $AUDIO_MODEL (첫 실행은 내려받기 때문에 오래 걸립니다)"
-    if curl -fsS --max-time 900 "${auth[@]}" \
+    log "워밍업 — 모델 $AUDIO_MODEL (첫 적재라 좀 걸립니다)"
+    code="$(curl -sS --max-time 900 -o "$LOG_DIR/warmup.log" -w '%{http_code}' \
+        "${auth[@]}" \
         -F "file=@$WARM" -F "model=$AUDIO_MODEL" \
-        "http://127.0.0.1:$SPEACHES_PORT/v1/audio/transcriptions" \
-        >"$LOG_DIR/warmup.log" 2>&1
-    then
-        log "워밍업 통과 → $LOG_DIR/warmup.log"
+        "http://127.0.0.1:$SPEACHES_PORT/v1/audio/transcriptions" 2>>"$LOG_DIR/warmup.log")"
+    if [ "$code" = "200" ]; then
+        log "워밍업 통과 (HTTP 200) → $LOG_DIR/warmup.log"
     else
-        log "⚠ 워밍업 실패 — 모델 id 가 틀렸을 수 있습니다. 4번 목록과 대조하세요"
-        tail -n 20 "$LOG_DIR/warmup.log" 2>/dev/null || true
+        log "⚠ 워밍업 실패 — HTTP $code"
+        head -c 600 "$LOG_DIR/warmup.log" 2>/dev/null | sed 's/^/      /'
+        echo
+        log "  speaches.log 의 트레이스백을 보세요: tail -n 40 $LOG_DIR/speaches.log"
+        log "  CacheNotFound 면 모델이 안 받아진 것입니다 — bootstrap 을 다시 돌리세요"
     fi
 else
     log "워밍업 파일이 없어 건너뜁니다"
