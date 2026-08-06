@@ -22,7 +22,7 @@ ENV_FILE="/etc/chatos-audio.env"
 # 점유하고 있어서, 쓰면 /workspace/chatos-image 를 가리킵니다.
 AUDIO_ROOT="${AUDIO_ROOT:-/workspace/chatos-audio}"
 SPEACHES_PORT="${SPEACHES_PORT:-8000}"
-AUDIO_MODEL="${AUDIO_MODEL:-Systran/faster-whisper-large-v3}"
+AUDIO_MODEL="${AUDIO_MODEL:-Systran/faster-whisper-large-v3-turbo}"
 AUDIO_GPU_TOKEN="${AUDIO_GPU_TOKEN:-}"
 BASE="http://127.0.0.1:$SPEACHES_PORT"
 

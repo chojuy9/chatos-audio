@@ -20,7 +20,7 @@ mkdir -p "$LOG_DIR" "$RUN_DIR"
 
 SPEACHES_DIR="${SPEACHES_DIR:-$WORKSPACE_DIR/speaches}"
 SPEACHES_PORT="${SPEACHES_PORT:-8000}"
-AUDIO_MODEL="${AUDIO_MODEL:-Systran/faster-whisper-large-v3}"
+AUDIO_MODEL="${AUDIO_MODEL:-Systran/faster-whisper-large-v3-turbo}"
 AUDIO_GPU_TOKEN="${AUDIO_GPU_TOKEN:-}"
 TUNNEL_TOKEN="${TUNNEL_TOKEN:-}"
 WARM="$WORKSPACE_DIR/warmup.wav"
@@ -30,6 +30,21 @@ log() { echo "[실행 $(date -u '+%H:%M:%S')] $*"; }
 # **8080 을 쓰지 마세요.** Vast 의 Jupyter 가 그 자리입니다 (5차 2-3 의 재발 자리).
 if [ "$SPEACHES_PORT" = "8080" ]; then
     echo "!! SPEACHES_PORT=8080 은 Jupyter 와 충돌합니다. 8000 을 쓰세요" >&2
+    exit 1
+fi
+
+# **터널이 붙는데 토큰이 없으면 아예 안 뜹니다.**
+# 이 조합이 곧 "인증 없는 GPU 를 인터넷에 내놓기" 입니다. 경고로 두면
+# 언젠가 그냥 지나갑니다 — 6차 workers_dev 와 같은 자리라 못 하게 만듭니다.
+if [ -n "${TUNNEL_TOKEN:-}" ] && [ -z "${AUDIO_GPU_TOKEN:-}" ]; then
+    cat >&2 <<'MSG'
+!! 터널이 설정돼 있는데 AUDIO_GPU_TOKEN 이 비었습니다.
+!! 이대로 뜨면 주소를 아는 사람이 GPU 를 직접 부를 수 있고,
+!! 그러면 할당량이 통째로 우회됩니다. 기동을 거부합니다.
+!!
+!!   해결: AUDIO_GPU_TOKEN 을 Vast 계정 환경변수에 넣고 go.sh 를 다시 돌리세요.
+!!         Cloudflare Worker 의 AUDIO_GPU_TOKEN 시크릿과 **같은 값**이어야 합니다.
+MSG
     exit 1
 fi
 
@@ -181,7 +196,7 @@ fi
 # `wait` 가 즉시 127 로 실패하면서 **살아 있는데 죽었다고** 찍습니다
 # (11차 10-3). 대신 종료 코드는 못 얻습니다.
 
-log "준비 완료. `chatos-audio status` 로 확인하세요"
+log '준비 완료. chatos-audio status 로 확인하세요'
 
 (
     while kill -0 "$SPEACHES_PID" 2>/dev/null; do sleep 10; done

@@ -1,64 +1,105 @@
 # chatos-audio
 
-[chatos.page](https://chatos.page) 의 음성 인식(STT)을 Vast.ai 서버리스에서 돌리는 워커입니다.
+[chatos.page](https://chatos.page) 의 음성 인식(STT) GPU 쪽 패키지입니다. **온디맨드로 빌린 GPU 인스턴스에서 돕니다.**
 
-**이 저장소는 public 입니다. 비밀값을 넣지 마세요.** 토큰과 키는 Vast 환경변수와 Cloudflare Worker 시크릿에 있습니다. public 인 이유는 Vast 의 `start_server.sh` 가 `git clone "$PYWORKER_REPO"` 한 줄로 받아가는데 **인증을 붙이는 자리가 없어서**입니다 — private 으로 두면 PAT 를 URL 에 박아야 하고, 그 토큰이 남의 물리 머신에 평문으로 앉습니다.
+이미지를 굽지 않습니다. Vast 기본 파이토치 템플릿 위에 이 저장소를 클론하면 스크립트가 설치·실행을 다 합니다 — 이미지 생성 쪽 `comfyui_workflow_maker` 와 같은 구조입니다.
+
+> **2026-08-06 — Vast 서버리스(PyWorker) 방식은 접었습니다.** `Dockerfile` · `worker.py` · `on-start.sh` · ghcr 빌드는 그때 쓰던 것이라 지웠습니다. PyWorker 가 JSON 전용이라 multipart 를 못 받는 것이 발단이었고, 온디맨드에서는 클라이언트가 speaches 에 직접 닿아 그 제약이 통째로 사라집니다.
+
+**이 저장소는 public 입니다. 비밀값을 넣지 마세요.** 토큰은 전부 Vast 계정 환경변수와 Cloudflare Worker 시크릿에 있습니다. `.gitignore` 가 `.env` 를 막고 있지만, 막는 것과 안 넣는 것은 다릅니다.
+
+---
+
+## 쓰는 법
+
+새 인스턴스의 **On-start Script** 칸에 두 줄:
+
+```bash
+git clone --depth 1 https://github.com/chojuy9/chatos-audio /workspace/chatos-audio
+bash /workspace/chatos-audio/go.sh
+```
+
+그다음부터는 인스턴스에서 한 마디입니다.
+
+```
+chatos-audio                 최신으로 받고 설치·실행 (몇 번을 쳐도 안전)
+chatos-audio status          speaches 응답 · 프로세스 · 로그 · GPU
+chatos-audio models          쓸 수 있는 모델 목록
+chatos-audio test 파일.mp3   전사 한 건 + 걸린 시간
+chatos-audio logs            로그 따라가기
+chatos-audio stop            정지
+```
+
+---
 
 ## 구조
 
 ```
-이용자 앱 ──multipart──▶ api.chatos.page/v1/audio/transcriptions
-                             Cloudflare Worker (chatos-auth, private)
-                               ├─ LiteLLM 키 검증 · 할당량 예약
-                               ├─ 오디오를 R2 에 저장 → 일회용 토큰 URL
-                               ├─ POST run.vast.ai/route/     → 워커 주소
-                               └─ POST {워커}/v1/audio/transcriptions
-                                        { "auth_data": {...},
-                                          "payload": { "audio_url": "...", ... } }
-                                                │
-                                          PyWorker (worker.py, 이 저장소)
-                                                │  audio_url 을 내려받아
-                                                ▼  multipart 로 넘김
-                                          speaches  127.0.0.1:8000
+Cloudflare Worker (chatos-auth, private)
+   │  multipart + Authorization: Bearer <AUDIO_GPU_TOKEN>
+   ▼
+cloudflared 터널        (TUNNEL_TOKEN 이 있을 때만)
+   ▼
+speaches  127.0.0.1:8000   ← 밖에서 직접 못 닿습니다
 ```
 
-**왜 URL 로 건네받나** — Vast 의 PyWorker 는 JSON 만 주고받습니다. `await request.json()` 으로 읽고 `session.post(..., json=...)` 로 넘기는 구조라 multipart 를 받는 자리가 없습니다. base64 를 봉투에 담는 방법도 있지만 본문 크기 제약이 따라와서 R2 경유로 갔습니다.
+**speaches 는 `127.0.0.1` 로만 듣습니다.** `UVICORN_HOST` 기본값이 `0.0.0.0` 이라 `run.sh` 가 명시적으로 끕니다 — 밖에서 닿으면 할당량이 통째로 우회됩니다 (4차 ComfyUI 8188 과 같은 자리).
 
-## 파일
+**터널이 설정됐는데 `AUDIO_GPU_TOKEN` 이 비면 기동을 거부합니다.** 그 조합이 곧 "인증 없는 GPU 를 인터넷에 내놓기" 라서, 경고가 아니라 거부입니다.
 
-| 파일 | 역할 |
-|---|---|
-| `worker.py` | PyWorker 설정. **저장소 최상단에 있어야 합니다** — `start_server.sh` 가 `python3 -m worker` 로 찾습니다 |
-| `Dockerfile` | speaches 공식 이미지 + `git` + root + 시작 스크립트. 다섯 줄짜리 한 겹 |
-| `on-start.sh` | speaches 와 PyWorker 를 함께 띄웁니다 |
-| `.github/workflows/build.yml` | ghcr 로 빌드·푸시. **풀린 이미지 크기를 요약에 남깁니다** |
+---
 
 ## 환경변수
 
-이미지에 기본값이 박혀 있고, Vast 템플릿에서 덮어쓸 수 있습니다.
+**Vast 계정 환경변수**(Account → Settings)에 넣어두면 인스턴스를 새로 잡아도 따라옵니다. `go.sh` 가 `/etc/chatos-audio.env` 에 굳혀서 Jupyter 터미널에서도 보이게 합니다.
 
-| 변수 | 기본값 | 비고 |
+| 이름 | 필수 | 내용 |
 |---|---|---|
-| `STT_MODEL` | `Systran/faster-whisper-large-v3-turbo` | |
-| `SPEACHES_PORT` | `8000` | **로컬에만 듣습니다.** 밖에서 닿으면 할당량이 우회됩니다 |
-| `MAX_AUDIO_BYTES` | 64MB | Cloudflare 쪽 상한보다 넉넉해야 합니다 |
-| `TRANSCRIBE_TIMEOUT` | 600초 | Worker 의 `upstreamTimeoutMs` 보다 **짧아야** 사유가 붙습니다 |
-| `AUDIO_BYTES_PER_SECOND` | 16000 | 근사 기준. Worker 의 `durationFallback` 과 같아야 합니다 |
-| `PYWORKER_REPO` | 이 저장소 | |
+| `AUDIO_GPU_TOKEN` | **터널을 붙이면 필수** | GPU 앞단 인증. Worker 의 같은 이름 시크릿과 **같은 값** |
+| `AUDIO_MODEL` | | whisper 모델 id. 기본 `Systran/faster-whisper-large-v3-turbo` |
+| `TUNNEL_TOKEN` | | 있으면 cloudflared 를 같이 띄웁니다. 없으면 로컬 전용 |
+| `SPEACHES_PORT` | | 기본 8000. **8080 은 Jupyter 와 충돌해서 거부됩니다** |
+| `WHISPER__COMPUTE_TYPE` | | speaches 설정. 중첩 설정은 이중 밑줄입니다 |
 
-## 응답
+> **`INSTALL_ROOT` 를 쓰지 않습니다.** 이미지 생성 쪽이 계정 환경변수로 그 이름을 이미 점유하고 있어서(`/workspace/chatos-image`), 쓰면 엉뚱한 저장소를 가리킵니다. 실제로 한 번 걸렸습니다. 위치는 스크립트가 자기 경로에서 구하고, `origin` 이 `chatos-audio` 일 때만 갱신합니다.
+>
+> **계정 환경변수는 그 계정의 모든 인스턴스에 들어옵니다.** 새 변수는 `AUDIO_` 접두사로 만드세요.
 
-`remote_function` 의 반환값은 PyWorker 가 `{"result": ...}` 로 감싸서 돌려줍니다.
+---
 
-```json
-{ "result": { "text": "...", "duration": 83.4,
-              "duration_estimated": false, "audio_bytes": 1334016 } }
-```
+## 파일
 
-`duration_estimated` 가 `true` 면 **speaches 가 길이를 안 줘서 파일 크기로 짐작한 것**입니다. 조용히 근사값을 정확한 값처럼 돌려주면 이용자가 자기 할당량이 왜 줄었는지 알 수 없습니다.
+| | |
+|---|---|
+| `go.sh` | 진입점. 환경변수를 굳히고 설치 → 실행 → `chatos-audio` 명령 설치 |
+| `scripts/bootstrap.sh` | apt(ffmpeg) · uv · speaches clone · `uv sync` · **임포트 검사** · 워밍업 파일 |
+| `scripts/run.sh` | speaches 기동 · health 대기 · 모델 목록 · 워밍업 · 터널 · 감시 |
+| `scripts/chatos-audio` | 위 명령들 |
+
+**speaches 는 PyPI 에 없습니다.** `git clone` + `uv sync` 가 유일한 비-Docker 경로이고, 그 덕에 저장소 안에 격리된 `.venv` 가 생겨 **베이스 이미지의 torch 와 안 섞입니다.**
+
+---
+
+## 진단
+
+로그는 `/workspace/logs/` 에 넷으로 갈립니다. **파일이 없다는 것 자체가 단서입니다.**
+
+| 파일 | 없으면 |
+|---|---|
+| `install.log` | `go.sh` 가 시작도 못 한 것 |
+| `speaches.log` | 모델 서버가 아예 안 뜬 것 |
+| `warmup.log` | speaches 가 health 까지 못 간 것 |
+| `tunnel.log` | 터널을 안 띄운 것 (`TUNNEL_TOKEN` 이 없으면 정상) |
+
+**설치의 성공 종료 코드를 믿지 마세요.** `uv sync` 는 의존성 충돌을 경고로만 찍고 0 을 돌려줍니다. 판정은 `bootstrap.sh` 의 임포트 검사(`ctranslate2` · `faster_whisper` · `speaches.main`)가 합니다.
+
+**워밍업이 모델 프리다운로드를 겸합니다.** 1초 무음을 전사시켜 모델을 미리 끌어오고, 동시에 경로 전체가 도는지 확인합니다. 여기가 통과하면 STT 는 실제로 되는 것입니다.
+
+---
 
 ## 아직 안 된 것
 
-- **벤치마크가 합성 톤입니다.** 모델을 깨우는 데는 충분하지만 실제 말소리가 아니라 성능 점수를 낮게 잡을 수 있습니다. 한국어 표본을 재고 나면 바꿔야 합니다
-- **1건당 소요시간을 안 재봤습니다.** 콜드스타트·모델로드·연산 중 무엇이 지배적인지에 따라 타임아웃과 할당량이 정해집니다
+- **매니저(분할·병렬·병합)가 없습니다.** 지금은 speaches 를 그대로 부릅니다. 긴 오디오를 섹터로 나눠 배치로 돌리는 층이 들어올 자리이고, speaches 가 배치/VAD 를 노출하는지에 따라 두께가 갈립니다
+- **1건당 소요시간을 안 재봤습니다.** 타임아웃·할당량·입력 상한이 전부 여기 달려 있습니다
+- **모델 id 를 확정 안 했습니다.** 기본값은 후보일 뿐이라 `chatos-audio models` 로 확인하세요
 - TTS 는 없습니다. STT 로 경로를 완성한 뒤에 엔드포인트를 하나 더하는 일입니다
