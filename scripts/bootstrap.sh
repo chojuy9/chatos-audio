@@ -151,6 +151,31 @@ PY
     log "모델 내려받기 완료"
 fi
 
+# ── 6-1. 매니저 의존성 ────────────────────────────────────────────
+#
+# **speaches 의 .venv 에 얹지 않습니다.** 격리가 그쪽 방식의 이점이고, 우리
+# 것을 섞으면 cuDNN 때와 같은 자리를 다시 만듭니다 (12차 4-5). 매니저는
+# 순수 파이썬(fastapi · httpx)만 쓰므로 torch 도 CUDA 도 안 들어옵니다.
+#
+# **판정은 종료 코드가 아니라 임포트가 합니다** (5차 2-1).
+
+if [ -d "$MANAGER_DIR" ]; then
+    log "매니저 의존성 설치 — $MANAGER_DIR"
+    if ! (cd "$MANAGER_DIR" && "$UV" sync) >>"$LOG_DIR/install.log" 2>&1; then
+        echo "--- 마지막 20줄 ---"
+        tail -n 20 "$LOG_DIR/install.log"
+        die "매니저 uv sync 실패"
+    fi
+    if ! (cd "$MANAGER_DIR" && "$UV" run python -c \
+            "import fastapi, uvicorn, httpx, multipart") >>"$LOG_DIR/install.log" 2>&1; then
+        tail -n 20 "$LOG_DIR/install.log"
+        die "매니저 임포트 검사 실패 — python-multipart 가 빠지면 기동 중에 죽습니다"
+    fi
+    log "매니저 임포트 검사 통과"
+else
+    log "⚠ $MANAGER_DIR 없음 — 매니저를 건너뜁니다 (저장소를 갱신하세요)"
+fi
+
 # ── 7. 워밍업 파일 ────────────────────────────────────────────────
 #
 # 1초짜리 무음. run.sh 가 이걸로 첫 추론까지 밀어봅니다 — 여기가 통과하면

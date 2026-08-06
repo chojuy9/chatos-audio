@@ -1,0 +1,17 @@
+[project]
+name = "chatos-audio-manager"
+version = "0.1.0"
+description = "speaches 앞단. 인증·노출 차단·(예정) 분할과 병합"
+requires-python = ">=3.11"
+
+# **speaches 의 .venv 에 얹지 않습니다.** 격리가 그쪽 방식의 이점이고,
+# 우리 의존성을 섞으면 cuDNN 때와 같은 자리를 다시 만듭니다 (12차 4-5).
+# 여기는 순수 파이썬만 씁니다 — torch 도 CUDA 도 안 들어옵니다.
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "httpx>=0.27",
+    # multipart 를 못 읽으면 FastAPI 가 기동 중에 죽습니다. 빠뜨리기 쉬운 자리라
+    # 적어둡니다 — 우리가 받는 요청은 전부 multipart 입니다.
+    "python-multipart>=0.0.9",
+]

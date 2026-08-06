@@ -16,8 +16,28 @@ SPEACHES_DIR="${SPEACHES_DIR:-$WORKSPACE_DIR/speaches}"
 SPEACHES_PORT="${SPEACHES_PORT:-8000}"
 SPEACHES_REPO="${SPEACHES_REPO:-https://github.com/speaches-ai/speaches.git}"
 
+# 매니저 — **밖에서 닿는 유일한 자리이고, 터널 ingress 가 이 포트로 갑니다.**
+# speaches 포트를 터널에 직접 물면 /docs · /openapi.json · Web UI 가 인증
+# 없이 열립니다 (12차 8장).
+MANAGER_DIR="${MANAGER_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/manager}"
+MANAGER_PORT="${MANAGER_PORT:-8100}"
+
+# 분할. 지금은 꺼져 있습니다 — 통과 경로부터 세우는 것이 순서입니다.
+AUDIO_SPLIT="${AUDIO_SPLIT:-0}"
+
+# **Worker 의 upstreamTimeoutMs(91초)보다 짧아야 합니다.** 우리가 먼저 끊어야
+# Worker 가 상류 실패로 받아 예약을 반환합니다. 우리가 더 오래 붙들면 그
+# 요청은 #sweep 이 걷을 때까지(최대 4분 33초) 이용자 할당량을 잡습니다.
+MANAGER_UPSTREAM_TIMEOUT="${MANAGER_UPSTREAM_TIMEOUT:-85}"
+
 # whisper 모델. `chatos-audio registry whisper` 로 고를 수 있는 것을 봅니다.
-AUDIO_MODEL="${AUDIO_MODEL:-deepdml/faster-whisper-large-v3-turbo-ct2}"
+#
+# **`chatos-auth` 의 `config/service-policy.json` 에 있는 `model` 과 같아야
+# 합니다.** Worker 가 정책 파일의 값을 요청에 실어 보내는데, 그 모델이 로컬
+# 캐시에 없으면 speaches 가 CacheNotFound 로 500 을 냅니다 (12차 4-3).
+# 어긋나 있으면 **워밍업은 통과하는데 실이용자 첫 요청이 500** 입니다 —
+# 제일 늦게 드러나는 자리라 기본값을 정책값에 맞춰둡니다 (2-14 확정).
+AUDIO_MODEL="${AUDIO_MODEL:-Systran/faster-whisper-large-v3}"
 
 AUDIO_GPU_TOKEN="${AUDIO_GPU_TOKEN:-}"
 TUNNEL_TOKEN="${TUNNEL_TOKEN:-}"
@@ -32,5 +52,6 @@ WARM="$WORKSPACE_DIR/warmup.wav"
 
 export WORKSPACE_DIR LOG_DIR RUN_DIR \
        SPEACHES_DIR SPEACHES_PORT SPEACHES_REPO \
+       MANAGER_DIR MANAGER_PORT AUDIO_SPLIT MANAGER_UPSTREAM_TIMEOUT \
        AUDIO_MODEL AUDIO_GPU_TOKEN TUNNEL_TOKEN AUDIO_VAD_CPU \
        HF_HOME HF_HUB_CACHE WARM

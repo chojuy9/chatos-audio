@@ -39,7 +39,14 @@ status)
     else
         echo "  health   응답 없음"
     fi
-    for n in speaches tunnel; do
+    # **매니저가 밖에서 닿는 자리입니다.** 여기가 죽으면 speaches 가 멀쩡해도
+    # 서비스는 죽은 것이라 따로 봅니다. 상류 상태도 같이 실려 옵니다.
+    if m="$(curl -sS --max-time 3 "http://127.0.0.1:${MANAGER_PORT:-8100}/health" 2>/dev/null)"; then
+        echo "  매니저   $m"
+    else
+        echo "  매니저   응답 없음 (포트 ${MANAGER_PORT:-8100})"
+    fi
+    for n in manager speaches tunnel; do
         p="$RUN_DIR/$n.pid"
         if [ -f "$p" ] && kill -0 "$(cat "$p")" 2>/dev/null; then
             echo "  $n  PID $(cat "$p")  살아 있음"
@@ -50,7 +57,7 @@ status)
 
     echo
     echo "── 로그 (없으면 그 앞 단계에서 멈춘 것) ──"
-    for f in install.log speaches.log warmup.log warmup.err tunnel.log; do
+    for f in install.log speaches.log manager.log warmup.log warmup.err tunnel.log; do
         if [ -f "$LOG_DIR/$f" ]; then
             printf "  %-14s %s\n" "$f" "$(wc -l <"$LOG_DIR/$f") 줄"
         else
@@ -146,7 +153,7 @@ logs)
     ;;
 
 stop)
-    for n in speaches tunnel; do
+    for n in manager speaches tunnel; do
         p="$RUN_DIR/$n.pid"
         if [ -f "$p" ]; then
             pid="$(cat "$p")"

@@ -95,22 +95,24 @@ finally:
 PY
 }
 
+stop_one manager
 stop_one speaches
 stop_one tunnel
 
-log "포트 $SPEACHES_PORT 가 비기를 기다립니다"
-freed=0
-for _ in $(seq 1 30); do
-    if port_free "$SPEACHES_PORT"; then freed=1; break; fi
-    sleep 1
-done
-if [ "$freed" -ne 1 ]; then
-    log "⚠ 포트 $SPEACHES_PORT 를 아직 누가 쥐고 있습니다"
-    log "   남은 프로세스: $(pgrep -af 'uvicorn|speaches' | tr '\n' ' ' || true)"
+wait_port_free() {  # wait_port_free <포트> <이름>
+    log "포트 $1 이(가) 비기를 기다립니다"
+    for _ in $(seq 1 30); do
+        if port_free "$1"; then log "포트 $1 비었음"; return 0; fi
+        sleep 1
+    done
+    log "⚠ 포트 $1 을(를) 아직 누가 쥐고 있습니다 ($2)"
+    log "   남은 프로세스: $(pgrep -af 'uvicorn|speaches|manager' | tr '\n' ' ' || true)"
     log "   그대로 띄우면 바인드에 실패하고, health 검사가 옛 프로세스한테 속습니다"
-    exit 1
-fi
-log "포트 비었음"
+    return 1
+}
+
+wait_port_free "$SPEACHES_PORT" speaches || exit 1
+wait_port_free "$MANAGER_PORT" 매니저 || exit 1
 
 # ── 2. speaches ───────────────────────────────────────────────────
 #
@@ -279,6 +281,49 @@ else
     log "워밍업 파일이 없어 건너뜁니다"
 fi
 
+# ── 5-1. 매니저 ───────────────────────────────────────────────────
+#
+# **밖에서 닿는 것은 speaches 가 아니라 이쪽입니다.** 터널 ingress 를 반드시
+# 이 포트로 잡으세요 — speaches 를 직접 물면 `/docs` · `/openapi.json` ·
+# Web UI 가 인증 없이 열립니다 (12차 8장).
+#
+# **speaches 가 health 를 통과한 뒤에 띄웁니다.** 매니저만 살아 있고 상류가
+# 없는 상태를 만들면, 그 사이 요청이 502 로 나가고 이용자 할당량이 왔다
+# 갔다 합니다.
+
+if [ -d "$MANAGER_DIR" ]; then
+    log "매니저 시작 — 127.0.0.1:$MANAGER_PORT (분할 $([ "$AUDIO_SPLIT" = "1" ] && echo 켬 || echo 끔))"
+    cd "$MANAGER_DIR" || { echo "!! $MANAGER_DIR 없음" >&2; exit 1; }
+    setsid nohup "$UV" run python main.py >>"$LOG_DIR/manager.log" 2>&1 &
+    echo $! > "$RUN_DIR/manager.pid"
+    MANAGER_PID="$(cat "$RUN_DIR/manager.pid")"
+    log "매니저 PID $MANAGER_PID"
+
+    mready=0
+    for _ in $(seq 1 30); do
+        # **200 이 아니라 응답 자체를 봅니다.** 매니저의 /health 는 상류가
+        # 죽어 있으면 503 을 냅니다 — 그것도 "매니저는 떴다" 는 뜻입니다.
+        if curl -sS -o /dev/null "http://127.0.0.1:$MANAGER_PORT/health" 2>/dev/null; then
+            mready=1; break
+        fi
+        if ! kill -0 "$MANAGER_PID" 2>/dev/null; then
+            log "매니저가 죽었습니다 — 마지막 40줄:"
+            tail -n 40 "$LOG_DIR/manager.log"
+            exit 1
+        fi
+        sleep 1
+    done
+    if [ "$mready" -ne 1 ]; then
+        log "⚠ 매니저 health 가 30초 안에 안 떴습니다 — 마지막 40줄:"
+        tail -n 40 "$LOG_DIR/manager.log"
+        exit 1
+    fi
+    log "매니저 health 응답: $(curl -sS "http://127.0.0.1:$MANAGER_PORT/health" 2>/dev/null)"
+else
+    log "⚠ $MANAGER_DIR 없음 — 매니저 없이 뜹니다"
+    log "   이 상태로 터널을 speaches 에 물면 /docs 와 Web UI 가 인증 없이 열립니다"
+fi
+
 # ── 6. 터널 (설정돼 있을 때만) ───────────────────────────────────
 #
 # 자격증명 전달 방식은 아직 미결정입니다 (task 4-2). TUNNEL_TOKEN 이 있으면
@@ -296,6 +341,8 @@ if [ -n "$TUNNEL_TOKEN" ]; then
     fi
     if command -v cloudflared >/dev/null; then
         log "터널 시작"
+        log "  ⚠ 대시보드의 Public Hostname 이 **127.0.0.1:$MANAGER_PORT (매니저)** 를"
+        log "    가리키는지 확인하세요. $SPEACHES_PORT 로 두면 /docs · Web UI 가 인증 없이 열립니다"
         setsid nohup cloudflared tunnel --no-autoupdate run --token "$TUNNEL_TOKEN" \
             >>"$LOG_DIR/tunnel.log" 2>&1 &
         echo $! > "$RUN_DIR/tunnel.pid"
