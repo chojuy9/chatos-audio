@@ -71,6 +71,21 @@ SILENCE_MIN_SECONDS = float(os.environ.get("AUDIO_SILENCE_MIN_SECONDS", "0.35"))
 # 페널티가 없었지만(2-3), 확인한 것은 거기까지입니다.
 SECTOR_CONCURRENCY = int(os.environ.get("AUDIO_SECTOR_CONCURRENCY", "2"))
 
+# **길이 상한. 여기가 처음으로 실제 관문이 됩니다.**
+#
+# 지금까지 `maxDurationSeconds` 는 아무것도 안 막았습니다 — 길이는 전사하기
+# 전에 알 수 없어서 사전 판정이 원리적으로 불가능했고, 실제 관문은
+# `maxUploadBytes` 하나였습니다 (task 2-15). **분할이 들어오면서 ffprobe 로
+# 길이를 먼저 재게 됐고, 그래서 이제 압니다.**
+#
+# 안 막으면 어떻게 되나: 40MB @64kbps 는 83분이고, 분할 실측 RTF 0.0278 로
+# 약 138초입니다. Worker 의 91초를 넘으니 **91초를 다 태우고 실패**하고,
+# 그동안 이용자 예약이 묶입니다(#sweep 이 걷을 때까지 최대 4분 33초).
+# 몇 초 만에 거절하는 편이 이용자에게 낫습니다.
+#
+# **`config/service-policy.json` 의 `maxDurationSeconds` 와 같아야 합니다.**
+MAX_DURATION_SECONDS = float(os.environ.get("AUDIO_MAX_DURATION_SECONDS", "1980"))
+
 # **Worker 의 upstreamTimeoutMs(91초)보다 짧아야 합니다.**
 # 우리가 먼저 끊어야 Worker 가 "상류 실패" 로 받아 예약을 **반환**합니다.
 # 우리가 더 오래 붙들면 Worker 쪽이 먼저 끊기고, 그 요청은 #sweep 이
@@ -204,6 +219,20 @@ async def _transcribe_split(raw: bytes, filename: str, data: dict) -> Response:
             # 여기서 실패시키면 ffprobe 가 못 읽는 형식이 전부 막힙니다.
             log.warning("길이를 못 쟀습니다 — 통짜로 넘깁니다")
             return await _transcribe_whole(_file_part(filename, raw), data)
+
+        if duration > MAX_DURATION_SECONDS:
+            # **재기 전에 거절합니다.** 91초를 태우고 실패하는 것보다 낫고,
+            # Worker 가 이 상태 코드를 보고 "너무 김" 으로 바꿔서 냅니다.
+            log.info("%.1f초 — 상한 %.0f초를 넘어 거절합니다", duration, MAX_DURATION_SECONDS)
+            return JSONResponse(
+                {"error": {
+                    "message": f"오디오가 상한({MAX_DURATION_SECONDS / 60:.0f}분)보다 깁니다",
+                    "type": "duration_too_long",
+                    "duration": round(duration, 1),
+                    "limit": MAX_DURATION_SECONDS,
+                }},
+                status_code=413,
+            )
 
         if duration <= SECTOR_SECONDS:
             log.info("%.1f초 — 섹터 하나라 그대로 넘깁니다", duration)
