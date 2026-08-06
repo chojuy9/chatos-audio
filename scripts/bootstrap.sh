@@ -10,10 +10,8 @@
 
 set -uo pipefail
 
-WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
-LOG_DIR="$WORKSPACE_DIR/logs"
-SPEACHES_DIR="${SPEACHES_DIR:-$WORKSPACE_DIR/speaches}"
-SPEACHES_REPO="${SPEACHES_REPO:-https://github.com/speaches-ai/speaches.git}"
+# shellcheck disable=SC1090
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/defaults.sh"
 
 mkdir -p "$LOG_DIR"
 log() { echo "[설치 $(date -u '+%H:%M:%S')] $*"; }
@@ -130,12 +128,8 @@ fi
 # 캐시 디렉터리 자체가 없으면 `/v1/models`(로컬 목록)도 같이 500 입니다.
 # 그래서 **디렉터리를 만들고 모델을 미리 받는 것**이 설치의 일부입니다.
 
-export HF_HOME="${HF_HOME:-$WORKSPACE_DIR/.hf_home}"
-export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
 mkdir -p "$HF_HUB_CACHE"
 log "HF 캐시: $HF_HUB_CACHE"
-
-AUDIO_MODEL="${AUDIO_MODEL:-deepdml/faster-whisper-large-v3-turbo-ct2}"
 
 # 이미 받았으면 건너뜁니다. 캐시 디렉터리 이름은 huggingface_hub 규칙을 따릅니다.
 model_dir="$HF_HUB_CACHE/models--${AUDIO_MODEL//\//--}"

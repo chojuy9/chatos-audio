@@ -14,16 +14,12 @@ LOG_DIR="$WORKSPACE_DIR/logs"
 RUN_DIR="$WORKSPACE_DIR/run"
 ENV_FILE="/etc/chatos-audio.env"
 
-mkdir -p "$LOG_DIR" "$RUN_DIR"
 # shellcheck disable=SC1090
 [ -f "$ENV_FILE" ] && source "$ENV_FILE"
+# shellcheck disable=SC1090
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/defaults.sh"
 
-SPEACHES_DIR="${SPEACHES_DIR:-$WORKSPACE_DIR/speaches}"
-SPEACHES_PORT="${SPEACHES_PORT:-8000}"
-AUDIO_MODEL="${AUDIO_MODEL:-deepdml/faster-whisper-large-v3-turbo-ct2}"
-AUDIO_GPU_TOKEN="${AUDIO_GPU_TOKEN:-}"
-TUNNEL_TOKEN="${TUNNEL_TOKEN:-}"
-WARM="$WORKSPACE_DIR/warmup.wav"
+mkdir -p "$LOG_DIR" "$RUN_DIR" "$HF_HUB_CACHE"
 
 log() { echo "[실행 $(date -u '+%H:%M:%S')] $*"; }
 
@@ -131,11 +127,8 @@ export UVICORN_PORT="$SPEACHES_PORT"
 [ -n "$AUDIO_GPU_TOKEN" ] && export API_KEY="$AUDIO_GPU_TOKEN"
 [ -n "${WHISPER__COMPUTE_TYPE:-}" ] && export WHISPER__COMPUTE_TYPE
 
-# **HF 캐시 위치를 bootstrap 과 반드시 맞춰야 합니다.** 어긋나면 받아둔
-# 모델을 speaches 가 못 찾고 CacheNotFound 로 500 을 냅니다.
-export HF_HOME="${HF_HOME:-$WORKSPACE_DIR/.hf_home}"
-export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
-mkdir -p "$HF_HUB_CACHE"
+# HF 캐시 경로는 defaults.sh 에서 옵니다. bootstrap 과 같은 값이어야 하고,
+# 어긋나면 받아둔 모델을 못 찾아 CacheNotFound 로 500 이 납니다.
 
 # ── cuDNN 경로 ───────────────────────────────────────────────────
 #

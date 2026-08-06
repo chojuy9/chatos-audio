@@ -11,9 +11,6 @@
 
 set -uo pipefail
 
-WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
-LOG_DIR="$WORKSPACE_DIR/logs"
-RUN_DIR="$WORKSPACE_DIR/run"
 ENV_FILE="/etc/chatos-audio.env"
 # shellcheck disable=SC1090
 [ -f "$ENV_FILE" ] && source "$ENV_FILE"
@@ -21,9 +18,9 @@ ENV_FILE="/etc/chatos-audio.env"
 # **INSTALL_ROOT 를 쓰지 않습니다.** 이미지 생성 쪽 계정 환경변수가 그 이름을
 # 점유하고 있어서, 쓰면 /workspace/chatos-image 를 가리킵니다.
 AUDIO_ROOT="${AUDIO_ROOT:-/workspace/chatos-audio}"
-SPEACHES_PORT="${SPEACHES_PORT:-8000}"
-AUDIO_MODEL="${AUDIO_MODEL:-deepdml/faster-whisper-large-v3-turbo-ct2}"
-AUDIO_GPU_TOKEN="${AUDIO_GPU_TOKEN:-}"
+# shellcheck disable=SC1090
+[ -f "$AUDIO_ROOT/scripts/defaults.sh" ] && source "$AUDIO_ROOT/scripts/defaults.sh"
+
 BASE="http://127.0.0.1:$SPEACHES_PORT"
 
 auth=()

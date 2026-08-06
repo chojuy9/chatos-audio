@@ -65,9 +65,15 @@ if grep -q '^export INSTALL_ROOT=' "$ENV_FILE" 2>/dev/null; then
     grep -v '^export INSTALL_ROOT=' "$ENV_FILE" > "${ENV_FILE}.tmp" && mv "${ENV_FILE}.tmp" "$ENV_FILE"
 fi
 
+# 기본값을 먼저 채우고 나서 굳힙니다. **채우지 않으면 터미널에서 source 해도
+# AUDIO_MODEL 이 비어서, 손으로 치는 curl 이 조용히 깨집니다** — 실제로 걸렸습니다.
+# shellcheck disable=SC1090
+source "$AUDIO_ROOT/scripts/defaults.sh"
+
 # **INSTALL_ROOT 는 여기 없습니다.** 위 주석 참고
 for v in AUDIO_GPU_TOKEN AUDIO_MODEL SPEACHES_PORT MANAGER_PORT \
          TUNNEL_TOKEN TUNNEL_HOSTNAME SPEACHES_DIR AUDIO_VAD_CPU \
+         HF_HOME HF_HUB_CACHE \
          WHISPER__COMPUTE_TYPE HF_TOKEN; do
     persist "$v"
 done
