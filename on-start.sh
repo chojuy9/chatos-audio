@@ -18,7 +18,19 @@ mkdir -p "$LOG_DIR"
 log() { echo "[chatos $(date -u '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 # ── 1. speaches ──────────────────────────────────────────────
-log "speaches 시작 (${UVICORN_HOST:-127.0.0.1}:${UVICORN_PORT:-8000})"
+#
+# **작업 디렉터리를 반드시 맞춰야 합니다.** speaches 의 main.py 가
+# `StaticFiles(directory="realtime-console/dist")` 처럼 상대 경로를 쓰는 자리가
+# 있어서, 다른 데서 띄우면 기동 중에 RuntimeError 로 죽습니다. 원본 이미지는
+# WORKDIR 로 이걸 맞춰두는데, 우리는 USER 를 바꿨고 손으로 실행하는 경우도
+# 있어서 상속에 기대면 안 됩니다.
+SPEACHES_DIR="${SPEACHES_DIR:-/home/ubuntu/speaches}"
+if ! cd "$SPEACHES_DIR"; then
+    log "speaches 디렉터리가 없습니다: $SPEACHES_DIR"
+    exit 1
+fi
+
+log "speaches 시작 (${UVICORN_HOST:-127.0.0.1}:${UVICORN_PORT:-8000}) — cwd $SPEACHES_DIR"
 
 uvicorn --factory speaches.main:create_app \
     --host "${UVICORN_HOST:-127.0.0.1}" \
@@ -30,9 +42,13 @@ log "speaches PID $SPEACHES_PID"
 
 # 죽으면 알아채게 둡니다. PyWorker 의 healthcheck 가 실패로 잡아 Vast 에
 # 보고하지만, 로그에 사유가 남아 있어야 진단이 됩니다.
+# 서브셸에서는 `wait` 를 쓸 수 없습니다 — 부모가 띄운 프로세스는 자식이
+# 아니라 형제라, `wait` 가 즉시 127 로 실패하면서 **살아 있는데 죽었다고**
+# 찍습니다. 진단 도구가 거짓말하는 자리라 `kill -0` 으로 바꿨습니다.
+# 대신 종료 코드는 알 수 없습니다.
 (
-    wait "$SPEACHES_PID"
-    log "speaches 종료 (코드 $?) — 마지막 로그:"
+    while kill -0 "$SPEACHES_PID" 2>/dev/null; do sleep 5; done
+    log "speaches 프로세스가 사라졌습니다 — 마지막 로그:"
     tail -n 40 "$LOG_DIR/speaches.log"
 ) &
 
