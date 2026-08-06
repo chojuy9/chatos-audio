@@ -137,6 +137,44 @@ export HF_HOME="${HF_HOME:-$WORKSPACE_DIR/.hf_home}"
 export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
 mkdir -p "$HF_HUB_CACHE"
 
+# ── cuDNN 경로 ───────────────────────────────────────────────────
+#
+# **격리된 venv 의 대가입니다.** 파이썬 패키지 충돌은 안 생기는 대신,
+# 네이티브 라이브러리가 로더 경로에 안 잡힙니다.
+#
+# cuDNN 9 는 ops · cnn · adv · graph 로 쪼개져 있습니다. onnxruntime 은
+# 자기 벤더 사본(`libcudnn-<해시>.so.9.1.0`)을 먼저 올리는데 거기엔 `_cnn` 이
+# 없고, 뒤이어 ctranslate2 가 `libcudnn_cnn.so.9` 를 열려다 실패한 뒤 이미
+# 열린 핸들로 폴백해서 이렇게 죽습니다 —
+#
+#   Unable to load any of {libcudnn_cnn.so.9.1.0, ..., libcudnn_cnn.so.9}
+#   Invalid handle. Cannot load symbol cudnnCreateConvolutionDescriptor
+#
+# **파이썬 예외가 아니라 프로세스가 통째로 죽습니다.** 그래서 500 이 아니라
+# `curl: (52) Empty reply from server` 로 보입니다.
+#
+# 직접 `WhisperModel(device="cuda")` 를 돌리면 되는데 서버에서만 죽는 이유가
+# 이것입니다 — 서버는 whisper 앞에 VAD(onnxruntime)를 먼저 돌립니다.
+
+nvidia_libs=""
+for d in "$SPEACHES_DIR"/.venv/lib/python*/site-packages/nvidia/*/lib; do
+    [ -d "$d" ] && nvidia_libs="${nvidia_libs:+$nvidia_libs:}$d"
+done
+if [ -n "$nvidia_libs" ]; then
+    export LD_LIBRARY_PATH="${nvidia_libs}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    log "cuDNN 경로 $(printf '%s' "$nvidia_libs" | tr ':' '\n' | wc -l)개를 LD_LIBRARY_PATH 에 넣었습니다"
+else
+    log "⚠ venv 에서 nvidia 라이브러리 디렉터리를 못 찾았습니다"
+fi
+
+# 위로 안 되면 이쪽입니다 — VAD 를 CPU 로 돌려 onnxruntime 의 CUDA 스택을
+# 아예 안 올립니다. silero VAD 는 아주 작은 모델이라 CPU 로 충분합니다
+# (GPU 에서도 1초 오디오에 0.32초 걸렸습니다 — 전송이 연산보다 큰 크기).
+if [ "${AUDIO_VAD_CPU:-0}" = "1" ]; then
+    export UNSTABLE_ORT_OPTS__EXCLUDE_PROVIDERS='["TensorrtExecutionProvider","CUDAExecutionProvider"]'
+    log "VAD 를 CPU 로 돌립니다 (AUDIO_VAD_CPU=1)"
+fi
+
 log "speaches 시작 — 127.0.0.1:$SPEACHES_PORT · cwd $SPEACHES_DIR"
 [ -n "$AUDIO_GPU_TOKEN" ] || log "  ⚠ AUDIO_GPU_TOKEN 이 비었습니다 — 인증 없이 뜹니다. 터널을 붙이기 전에 채우세요"
 

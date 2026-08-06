@@ -80,6 +80,8 @@ speaches  127.0.0.1:8000   ← 밖에서 직접 못 닿습니다
 
 **speaches 는 PyPI 에 없습니다.** `git clone` + `uv sync` 가 유일한 비-Docker 경로이고, 그 덕에 저장소 안에 격리된 `.venv` 가 생겨 **베이스 이미지의 torch 와 안 섞입니다.**
 
+> **다만 격리에는 대가가 있습니다.** 파이썬 패키지 충돌은 안 생기는 대신 **네이티브 라이브러리가 로더 경로에 안 잡힙니다.** `run.sh` 가 `.venv/.../site-packages/nvidia/*/lib` 를 `LD_LIBRARY_PATH` 에 넣는 이유입니다 — 안 넣으면 whisper 적재에서 프로세스가 통째로 죽습니다(아래 진단 참고).
+
 ---
 
 ## 진단
@@ -114,6 +116,23 @@ huggingface_hub.errors.CacheNotFound: Cache directory not found: /workspace/.hf_
 **`bootstrap.sh` 와 `run.sh` 의 HF 캐시 경로가 같아야 합니다.** 어긋나면 받아둔 모델을 speaches 가 못 찾고 같은 500 이 납니다.
 
 **워밍업이 첫 추론까지 밀어봅니다.** 여기가 통과하면 STT 는 실제로 되는 것이고, **CUDA/cuDNN 궁합도 여기서 갈립니다** — 모델을 적재해야 나오는 종류라 내려받기만으로는 안 드러납니다.
+
+### `curl: (52) Empty reply from server` — cuDNN
+
+```
+Unable to load any of {libcudnn_cnn.so.9.1.0, ..., libcudnn_cnn.so.9}
+Invalid handle. Cannot load symbol cudnnCreateConvolutionDescriptor
+```
+
+**파이썬 예외가 아니라 프로세스가 통째로 죽는 것**이라 500 이 아니라 빈 응답으로 보입니다. cuDNN 9 가 `ops` · `cnn` · `adv` · `graph` 로 쪼개져 있는데, 서버는 whisper 앞에 **VAD(onnxruntime)** 를 먼저 돌리고 onnxruntime 은 `_cnn` 이 없는 자기 벤더 사본을 올립니다. 그다음 ctranslate2 가 `libcudnn_cnn.so.9` 를 못 찾습니다.
+
+`run.sh` 가 `LD_LIBRARY_PATH` 로 해결합니다. 그래도 죽으면 **VAD 를 CPU 로** 돌리세요 — silero 는 아주 작은 모델이라 CPU 로 충분합니다.
+
+```
+AUDIO_VAD_CPU=1
+```
+
+> **직접 `WhisperModel(device="cuda")` 를 돌리면 성공하는데 서버에서만 죽습니다.** 그 차이가 VAD 였습니다 — 재현이 안 될 때 이 점을 기억하세요.
 
 ---
 
