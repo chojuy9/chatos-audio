@@ -58,6 +58,11 @@ speaches  127.0.0.1:8000   ← 밖에서 직접 못 닿습니다
 | 이름 | 필수 | 내용 |
 |---|---|---|
 | `AUDIO_GPU_TOKEN` | **터널을 붙이면 필수** | GPU 앞단 인증. Worker 의 같은 이름 시크릿과 **같은 값** |
+| `AUDIO_JOB_TOKEN` | **비동기 잡 사용 시 필수** | Worker 내부 pull 인증. Worker의 같은 이름 시크릿과 같고 `AUDIO_GPU_TOKEN`과는 다른 값 |
+| `AUDIO_JOB_API_BASE` | | 비동기 잡 Worker. 기본 `https://chatos.page` |
+| `AUDIO_LYRICS_ENABLED` | | 보컬 분리 실측 후 `1`. 기본 `0` |
+| `AUDIO_LYRICS_MODEL` | | Demucs 모델. 기본 `htdemucs` |
+| `AUDIO_LYRICS_SEPARATOR_CMD` | | Demucs 대신 쓸 명령. `{input}`·`{output}`·`{output_dir}` 자리표시자 지원 |
 | `AUDIO_MODEL` | | whisper 모델 id. 기본 `deepdml/faster-whisper-large-v3-turbo-ct2` |
 | `TUNNEL_TOKEN` | | 있으면 cloudflared 를 같이 띄웁니다. 없으면 로컬 전용 |
 | `SPEACHES_PORT` | | 기본 8000. **8080 은 Jupyter 와 충돌해서 거부됩니다** |
@@ -75,7 +80,8 @@ speaches  127.0.0.1:8000   ← 밖에서 직접 못 닿습니다
 |---|---|
 | `go.sh` | 진입점. 환경변수를 굳히고 설치 → 실행 → `chatos-audio` 명령 설치 |
 | `scripts/bootstrap.sh` | apt(ffmpeg) · uv · speaches clone · `uv sync` · **임포트 검사** · 워밍업 파일 |
-| `scripts/run.sh` | speaches 기동 · health 대기 · 모델 목록 · 워밍업 · 터널 · 감시 |
+| `scripts/run.sh` | speaches·매니저 기동 · 워밍업 · 비동기 잡 에이전트 · 선택적 터널 |
+| `manager/job_agent.py` | Worker에서 잡·입력을 가져와 전사하고 결과를 되돌리는 pull 에이전트 |
 | `scripts/chatos-audio` | 위 명령들 |
 
 **speaches 는 PyPI 에 없습니다.** `git clone` + `uv sync` 가 유일한 비-Docker 경로이고, 그 덕에 저장소 안에 격리된 `.venv` 가 생겨 **베이스 이미지의 torch 와 안 섞입니다.**

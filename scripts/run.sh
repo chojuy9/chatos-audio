@@ -95,6 +95,7 @@ finally:
 PY
 }
 
+stop_one audio-agent
 stop_one manager
 stop_one speaches
 stop_one tunnel
@@ -322,6 +323,22 @@ if [ -d "$MANAGER_DIR" ]; then
 else
     log "⚠ $MANAGER_DIR 없음 — 매니저 없이 뜹니다"
     log "   이 상태로 터널을 speaches 에 물면 /docs 와 Web UI 가 인증 없이 열립니다"
+fi
+
+# ── 5-2. 비동기 잡 pull 에이전트 ───────────────────────────────────
+#
+# GPU로 들어오는 공개 포트는 없습니다. 에이전트가 Worker에서 잡과 입력을 가져가고
+# 결과만 되돌립니다. AUDIO_JOB_TOKEN이 없으면 기존 동기 STT만 그대로 동작합니다.
+
+if [ -n "${AUDIO_JOB_TOKEN:-}" ] && [ -n "${AUDIO_JOB_API_BASE:-}" ]; then
+    log "비동기 잡 에이전트 시작 — ${AUDIO_JOB_API_BASE}"
+    cd "$MANAGER_DIR" || { echo "!! $MANAGER_DIR 없음" >&2; exit 1; }
+    setsid nohup "$UV" run python job_agent.py >>"$LOG_DIR/audio-agent.log" 2>&1 &
+    echo $! > "$RUN_DIR/audio-agent.pid"
+    AUDIO_AGENT_PID="$(cat "$RUN_DIR/audio-agent.pid")"
+    log "잡 에이전트 PID $AUDIO_AGENT_PID"
+else
+    log "AUDIO_JOB_TOKEN 없음 — 비동기 잡 에이전트 건너뜀"
 fi
 
 # ── 6. 터널 (설정돼 있을 때만) ───────────────────────────────────
