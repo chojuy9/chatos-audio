@@ -62,6 +62,7 @@ speaches  127.0.0.1:8000   ← 밖에서 직접 못 닿습니다
 | `AUDIO_JOB_API_BASE` | | 비동기 잡 Worker. 기본 `https://chatos.page` |
 | `AUDIO_LYRICS_ENABLED` | | 보컬 분리 실측 후 `1`. 기본 `0` |
 | `AUDIO_LYRICS_MODEL` | | Demucs 모델. 기본 `htdemucs` |
+| `AUDIO_LYRICS_DEVICE` | | Demucs 장치. GPU 서비스 기본 `cuda` |
 | `AUDIO_LYRICS_SEPARATOR_CMD` | | Demucs 대신 쓸 명령. `{input}`·`{output}`·`{output_dir}` 자리표시자 지원 |
 | `AUDIO_MODEL` | | whisper 모델 id. 기본 `deepdml/faster-whisper-large-v3-turbo-ct2` |
 | `TUNNEL_TOKEN` | | 있으면 cloudflared 를 같이 띄웁니다. 없으면 로컬 전용 |
@@ -85,6 +86,18 @@ speaches  127.0.0.1:8000   ← 밖에서 직접 못 닿습니다
 | `scripts/chatos-audio` | 위 명령들 |
 
 **speaches 는 PyPI 에 없습니다.** `git clone` + `uv sync` 가 유일한 비-Docker 경로이고, 그 덕에 저장소 안에 격리된 `.venv` 가 생겨 **베이스 이미지의 torch 와 안 섞입니다.**
+
+### 노래 가사 경로 열기
+
+`AUDIO_LYRICS_ENABLED=1`이면 매니저 전용 가상환경에 고정 버전 Demucs를 추가로 설치합니다. 기본 STT만 쓰는 인스턴스에는 Demucs와 두 번째 torch 환경을 설치하지 않습니다. 설치 중 Demucs 임포트·CUDA 확인에 이어 1초 오디오의 실제 보컬 분리까지 통과해야 기동됩니다.
+
+먼저 대표 노래 파일로 분리 시간과 전사 결과를 확인합니다.
+
+```bash
+chatos-audio lyrics-test /workspace/sample-song.mp3 > /workspace/sample-song.lyrics.json
+```
+
+이 명령은 `보컬 분리 → vocals.wav → 매니저 STT`를 실제 서비스와 같은 순서로 실행하고, 분리·전사 시간을 stderr에 따로 표시합니다. 결과와 VRAM을 확인한 뒤에만 `chatos-auth/config/service-policy.json`의 `lyrics.enabled`를 여세요. GPU만 켜거나 Worker만 켜면 공개되지 않도록 두 단계로 분리돼 있습니다.
 
 > **다만 격리에는 대가가 있습니다.** 파이썬 패키지 충돌은 안 생기는 대신 **네이티브 라이브러리가 로더 경로에 안 잡힙니다.** `run.sh` 가 `.venv/.../site-packages/nvidia/*/lib` 를 `LD_LIBRARY_PATH` 에 넣는 이유입니다 — 안 넣으면 whisper 적재에서 프로세스가 통째로 죽습니다(아래 진단 참고).
 

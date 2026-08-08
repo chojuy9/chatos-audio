@@ -9,6 +9,7 @@ import os
 import shlex
 import shutil
 import signal
+import sys
 import tempfile
 from pathlib import Path
 
@@ -26,6 +27,7 @@ POLL_SECONDS = max(1.0, float(os.environ.get("AUDIO_JOB_POLL_SECONDS", "2")))
 HEARTBEAT_SECONDS = max(5.0, float(os.environ.get("AUDIO_JOB_HEARTBEAT_SECONDS", "30")))
 LYRICS_ENABLED = os.environ.get("AUDIO_LYRICS_ENABLED", "0") == "1"
 LYRICS_MODEL = os.environ.get("AUDIO_LYRICS_MODEL", "htdemucs")
+LYRICS_DEVICE = os.environ.get("AUDIO_LYRICS_DEVICE", "cuda").strip() or "cuda"
 LYRICS_TIMEOUT = max(60.0, float(os.environ.get("AUDIO_LYRICS_TIMEOUT_SECONDS", "900")))
 CUSTOM_SEPARATOR = os.environ.get("AUDIO_LYRICS_SEPARATOR_CMD", "").strip()
 
@@ -37,8 +39,38 @@ class AgentFailure(Exception):
         self.requeue = requeue
 
 
+def _command_available(command: str) -> bool:
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return False
+    if not parts:
+        return False
+    executable = parts[0]
+    if os.path.isabs(executable) or "/" in executable:
+        path = Path(executable)
+        return path.is_file() and os.access(path, os.X_OK)
+    return shutil.which(executable) is not None
+
+
 def separator_available() -> bool:
-    return bool(CUSTOM_SEPARATOR or shutil.which("demucs"))
+    if CUSTOM_SEPARATOR:
+        return _command_available(CUSTOM_SEPARATOR)
+    return shutil.which("demucs") is not None
+
+
+def _demucs_environment() -> dict[str, str]:
+    env = os.environ.copy()
+    venv = Path(sys.executable).resolve().parent.parent
+    libraries: list[str] = []
+    for python_dir in (venv / "lib").glob("python*"):
+        for candidate in (python_dir / "site-packages" / "nvidia").glob("*/lib"):
+            if candidate.is_dir():
+                libraries.append(str(candidate))
+    inherited = env.get("LD_LIBRARY_PATH", "")
+    if libraries:
+        env["LD_LIBRARY_PATH"] = ":".join(libraries + ([inherited] if inherited else []))
+    return env
 
 
 def supported_tasks() -> list[str]:
@@ -63,6 +95,7 @@ def _headers(lease_token: str | None = None) -> dict[str, str]:
 
 async def _run_separator(input_path: Path, work_dir: Path) -> Path:
     output = work_dir / "vocals.wav"
+    process_env = None
     if CUSTOM_SEPARATOR:
         replacements = {
             "{input}": str(input_path),
@@ -84,16 +117,20 @@ async def _run_separator(input_path: Path, work_dir: Path) -> Path:
             "--two-stems=vocals",
             "-n",
             LYRICS_MODEL,
+            "-d",
+            LYRICS_DEVICE,
             "-o",
             str(demucs_out),
             str(input_path),
         ]
         output = demucs_out / LYRICS_MODEL / input_path.stem / "vocals.wav"
+        process_env = _demucs_environment()
 
     process = await asyncio.create_subprocess_exec(
         *command,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=process_env,
     )
     try:
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=LYRICS_TIMEOUT)
@@ -101,7 +138,7 @@ async def _run_separator(input_path: Path, work_dir: Path) -> Path:
         process.kill()
         await process.wait()
         raise AgentFailure("separation_failed") from None
-    if process.returncode != 0 or not output.is_file():
+    if process.returncode != 0 or not output.is_file() or output.stat().st_size <= 44:
         log.error(
             "분리 실패 code=%s stdout=%r stderr=%r",
             process.returncode,

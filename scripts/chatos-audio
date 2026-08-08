@@ -6,6 +6,7 @@
 #   chatos-audio status   speaches·터널 응답, 최근 로그
 #   chatos-audio models   speaches 가 쓸 수 있는 모델 목록
 #   chatos-audio test     한국어 오디오 한 건 전사 (인자로 파일 경로)
+#   chatos-audio lyrics-test  보컬 분리 뒤 전사하고 단계별 시간을 표시
 #   chatos-audio logs     로그 따라가기 (Ctrl+C 로 나옴)
 #   chatos-audio stop     정지
 
@@ -129,6 +130,42 @@ test)
         "$BASE/v1/audio/transcriptions"
     echo >&2
     echo "── 걸린 시간: $(( $(date +%s) - start ))초" >&2
+    ;;
+
+lyrics-test)
+    f="${2:-}"
+    [ -n "$f" ] && [ -f "$f" ] || {
+        echo "사용법: chatos-audio lyrics-test <노래파일>" >&2; exit 1; }
+    f="$(realpath "$f")"
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+
+    echo "분리 모델 $AUDIO_LYRICS_MODEL · 장치 $AUDIO_LYRICS_DEVICE · 파일 $f" >&2
+    separated_at=$(date +%s)
+    vocals="$( (cd "$MANAGER_DIR" && uv run python - "$f" "$tmp" <<'PY'
+import asyncio
+import sys
+from pathlib import Path
+
+from job_agent import _run_separator
+
+source = Path(sys.argv[1])
+work_dir = Path(sys.argv[2])
+print(asyncio.run(_run_separator(source, work_dir)))
+PY
+    ))"
+    separation_seconds=$(( $(date +%s) - separated_at ))
+    [ -s "$vocals" ] || { echo "!! vocals.wav가 생성되지 않았습니다" >&2; exit 1; }
+
+    transcribed_at=$(date +%s)
+    curl -sS "${auth[@]}" \
+        -F "file=@$vocals;type=audio/wav" \
+        -F "model=$AUDIO_MODEL" \
+        -F "response_format=verbose_json" \
+        "http://127.0.0.1:${MANAGER_PORT:-8100}/v1/audio/transcriptions"
+    transcription_seconds=$(( $(date +%s) - transcribed_at ))
+    echo >&2
+    echo "── 분리 ${separation_seconds}초 · 전사 ${transcription_seconds}초 · 합계 $(( separation_seconds + transcription_seconds ))초" >&2
     ;;
 
 text)
@@ -287,6 +324,7 @@ chatos-audio registry [검색어]   **내려받을 수 있는** 모델 (정확�
 chatos-audio models              **받아둔** 로컬 모델
 chatos-audio pull [모델id]       모델 내려받기
 chatos-audio test <오디오파일>   전사 한 건 (stdout 은 순수 JSON)
+chatos-audio lyrics-test <노래>   보컬 분리 → 전사, 단계별 시간 표시
 chatos-audio text <오디오파일>   전사 텍스트만 .txt 로 — **품질 볼 때**
 chatos-audio compare <파일> [프롬프트]
                                  **분할 있이/없이 대조 (2-9).** 반복 환각을 세어서 냅니다

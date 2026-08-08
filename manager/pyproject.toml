@@ -6,7 +6,8 @@ requires-python = ">=3.11"
 
 # **speaches 의 .venv 에 얹지 않습니다.** 격리가 그쪽 방식의 이점이고,
 # 우리 의존성을 섞으면 cuDNN 때와 같은 자리를 다시 만듭니다 (12차 4-5).
-# 여기는 순수 파이썬만 씁니다 — torch 도 CUDA 도 안 들어옵니다.
+# 기본 설치는 순수 파이썬만 씁니다. 가사를 명시적으로 열 때만 아래 lyrics
+# extra가 별도 torch/CUDA 환경을 이 venv 안에 추가합니다.
 dependencies = [
     "fastapi>=0.115",
     "uvicorn>=0.30",
@@ -14,4 +15,11 @@ dependencies = [
     # multipart 를 못 읽으면 FastAPI 가 기동 중에 죽습니다. 빠뜨리기 쉬운 자리라
     # 적어둡니다 — 우리가 받는 요청은 전부 multipart 입니다.
     "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+# 가사 추출을 실제로 열 때만 설치합니다. STT 전용 인스턴스에는 torch 계열을
+# 한 벌 더 넣지 않아 기존 speaches CUDA 환경과 설치 시간을 건드리지 않습니다.
+lyrics = [
+    "demucs==4.1.0",
 ]

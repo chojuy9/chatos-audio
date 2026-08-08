@@ -154,14 +154,20 @@ fi
 # ── 6-1. 매니저 의존성 ────────────────────────────────────────────
 #
 # **speaches 의 .venv 에 얹지 않습니다.** 격리가 그쪽 방식의 이점이고, 우리
-# 것을 섞으면 cuDNN 때와 같은 자리를 다시 만듭니다 (12차 4-5). 매니저는
-# 순수 파이썬(fastapi · httpx)만 쓰므로 torch 도 CUDA 도 안 들어옵니다.
+# 것을 섞으면 cuDNN 때와 같은 자리를 다시 만듭니다 (12차 4-5). 매니저 기본
+# 설치는 순수 파이썬이고, lyrics를 열었을 때만 이 격리 환경에 Demucs와 torch를
+# 추가합니다.
 #
 # **판정은 종료 코드가 아니라 임포트가 합니다** (5차 2-1).
 
 if [ -d "$MANAGER_DIR" ]; then
     log "매니저 의존성 설치 — $MANAGER_DIR"
-    if ! (cd "$MANAGER_DIR" && "$UV" sync) >>"$LOG_DIR/install.log" 2>&1; then
+    manager_sync=(sync)
+    if [ "$AUDIO_LYRICS_ENABLED" = "1" ] && [ -z "$AUDIO_LYRICS_SEPARATOR_CMD" ]; then
+        log "가사 추출 의존성 설치 — Demucs $AUDIO_LYRICS_MODEL ($AUDIO_LYRICS_DEVICE)"
+        manager_sync+=(--extra lyrics)
+    fi
+    if ! (cd "$MANAGER_DIR" && "$UV" "${manager_sync[@]}") >>"$LOG_DIR/install.log" 2>&1; then
         echo "--- 마지막 20줄 ---"
         tail -n 20 "$LOG_DIR/install.log"
         die "매니저 uv sync 실패"
@@ -172,6 +178,15 @@ if [ -d "$MANAGER_DIR" ]; then
         die "매니저 임포트 검사 실패 — python-multipart 가 빠지면 기동 중에 죽습니다"
     fi
     log "매니저 임포트 검사 통과"
+    if [ "$AUDIO_LYRICS_ENABLED" = "1" ] && [ -z "$AUDIO_LYRICS_SEPARATOR_CMD" ]; then
+        if ! (cd "$MANAGER_DIR" && "$UV" run python -c \
+                "import demucs, torch; assert torch.cuda.is_available() if '$AUDIO_LYRICS_DEVICE' == 'cuda' else True") \
+                >>"$LOG_DIR/install.log" 2>&1; then
+            tail -n 20 "$LOG_DIR/install.log"
+            die "가사 추출 사전검사 실패 — Demucs 임포트와 $AUDIO_LYRICS_DEVICE 장치를 확인하세요"
+        fi
+        log "가사 추출 사전검사 통과"
+    fi
 else
     log "⚠ $MANAGER_DIR 없음 — 매니저를 건너뜁니다 (저장소를 갱신하세요)"
 fi
@@ -187,6 +202,31 @@ if [ ! -f "$WARM" ]; then
     log "워밍업 파일 생성"
     ffmpeg -f lavfi -i anullsrc=r=16000:cl=mono -t 1 -y "$WARM" \
         >>"$LOG_DIR/install.log" 2>&1 || log "워밍업 파일 생성 실패 (치명적이지 않음)"
+fi
+
+if [ "$AUDIO_LYRICS_ENABLED" = "1" ]; then
+    [ -s "$WARM" ] || die "가사 분리 사전검사용 워밍업 파일이 없습니다"
+    lyrics_tmp="$(mktemp -d)"
+    lyrics_started=$(date +%s)
+    if ! (cd "$MANAGER_DIR" && "$UV" run --no-sync python - "$WARM" "$lyrics_tmp" <<'PY'
+import asyncio
+import sys
+from pathlib import Path
+
+from job_agent import _run_separator
+
+output = asyncio.run(_run_separator(Path(sys.argv[1]), Path(sys.argv[2])))
+if not output.is_file() or output.stat().st_size <= 44:
+    raise SystemExit("vocals.wav was not created")
+print(output)
+PY
+    ) >>"$LOG_DIR/install.log" 2>&1; then
+        rm -rf -- "$lyrics_tmp"
+        tail -n 30 "$LOG_DIR/install.log"
+        die "가사 분리 실동작 사전검사 실패 — Worker 정책을 열면 안 됩니다"
+    fi
+    rm -rf -- "$lyrics_tmp"
+    log "가사 분리 실동작 사전검사 통과 ($(( $(date +%s) - lyrics_started ))초)"
 fi
 
 log "설치 완료"
