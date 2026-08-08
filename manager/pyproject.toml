@@ -22,4 +22,7 @@ dependencies = [
 # 한 벌 더 넣지 않아 기존 speaches CUDA 환경과 설치 시간을 건드리지 않습니다.
 lyrics = [
     "demucs==4.1.0",
+    # Demucs 4.1.0 metadata는 NumPy를 macOS x86_64에서만 선언하지만
+    # Linux에서도 demucs.transformer가 직접 import합니다.
+    "numpy==1.26.4",
 ]

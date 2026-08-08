@@ -180,7 +180,7 @@ if [ -d "$MANAGER_DIR" ]; then
     log "매니저 임포트 검사 통과"
     if [ "$AUDIO_LYRICS_ENABLED" = "1" ] && [ -z "$AUDIO_LYRICS_SEPARATOR_CMD" ]; then
         if ! (cd "$MANAGER_DIR" && "$UV" run python -c \
-                "import demucs, torch; assert torch.cuda.is_available() if '$AUDIO_LYRICS_DEVICE' == 'cuda' else True") \
+                "import demucs.separate, numpy, torch; assert torch.cuda.is_available() if '$AUDIO_LYRICS_DEVICE' == 'cuda' else True") \
                 >>"$LOG_DIR/install.log" 2>&1; then
             tail -n 20 "$LOG_DIR/install.log"
             die "가사 추출 사전검사 실패 — Demucs 임포트와 $AUDIO_LYRICS_DEVICE 장치를 확인하세요"
