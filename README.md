@@ -40,7 +40,7 @@ chatos-audio stop                정지
 Cloudflare Worker (chatos-auth, private)
    │  multipart + Authorization: Bearer <AUDIO_GPU_TOKEN>
    ▼
-cloudflared 터널        (TUNNEL_TOKEN 이 있을 때만)
+cloudflared 터널        (AUDIO_TUNNEL_TOKEN 이 있을 때만)
    ▼
 speaches  127.0.0.1:8000   ← 밖에서 직접 못 닿습니다
 ```
@@ -65,7 +65,7 @@ speaches  127.0.0.1:8000   ← 밖에서 직접 못 닿습니다
 | `AUDIO_LYRICS_DEVICE` | | Demucs 장치. GPU 서비스 기본 `cuda` |
 | `AUDIO_LYRICS_SEPARATOR_CMD` | | Demucs 대신 쓸 명령. `{input}`·`{output}`·`{output_dir}` 자리표시자 지원 |
 | `AUDIO_MODEL` | | whisper 모델 id. 기본 `deepdml/faster-whisper-large-v3-turbo-ct2` |
-| `TUNNEL_TOKEN` | | 있으면 cloudflared 를 같이 띄웁니다. 없으면 로컬 전용 |
+| `AUDIO_TUNNEL_TOKEN` | | 있으면 cloudflared 를 같이 띄웁니다. 없으면 로컬 전용 |
 | `SPEACHES_PORT` | | 기본 8000. **8080 은 Jupyter 와 충돌해서 거부됩니다** |
 | `WHISPER__COMPUTE_TYPE` | | speaches 설정. 중첩 설정은 이중 밑줄입니다 |
 
@@ -112,7 +112,7 @@ chatos-audio lyrics-test /workspace/sample-song.mp3 > /workspace/sample-song.lyr
 | `install.log` | `go.sh` 가 시작도 못 한 것 |
 | `speaches.log` | 모델 서버가 아예 안 뜬 것 |
 | `warmup.log` | speaches 가 health 까지 못 간 것 |
-| `tunnel.log` | 터널을 안 띄운 것 (`TUNNEL_TOKEN` 이 없으면 정상) |
+| `tunnel.log` | 터널을 안 띄운 것 (`AUDIO_TUNNEL_TOKEN` 이 없으면 정상) |
 
 **갱신은 `git pull` 말고 `chatos-audio` 를 쓰세요.** `go.sh` 가 `fetch` + `reset --hard origin/main` 으로 원격 상태를 통째로 덮어씁니다. 인스턴스는 쓰고 버리는 것이라 로컬 변경을 지킬 이유가 없고, 덕분에 충돌이 안 납니다. `git pull` 로 막혔다면:
 

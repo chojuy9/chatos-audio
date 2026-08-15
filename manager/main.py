@@ -140,7 +140,7 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=_lifespa
 def _authorized(request: Request) -> bool:
     if not AUDIO_GPU_TOKEN:
         # 토큰이 없는 채로 뜨는 것은 로컬 시험 단계에서만 정상입니다.
-        # run.sh 가 TUNNEL_TOKEN 과 같이 있으면 기동 자체를 거부합니다.
+        # run.sh 가 AUDIO_TUNNEL_TOKEN 과 같이 있으면 기동 자체를 거부합니다.
         return True
     header = request.headers.get("authorization", "")
     if not header.startswith("Bearer "):

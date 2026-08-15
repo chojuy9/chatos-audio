@@ -32,7 +32,7 @@ fi
 # **터널이 붙는데 토큰이 없으면 아예 안 뜹니다.**
 # 이 조합이 곧 "인증 없는 GPU 를 인터넷에 내놓기" 입니다. 경고로 두면
 # 언젠가 그냥 지나갑니다 — 6차 workers_dev 와 같은 자리라 못 하게 만듭니다.
-if [ -n "${TUNNEL_TOKEN:-}" ] && [ -z "${AUDIO_GPU_TOKEN:-}" ]; then
+if [ -n "${AUDIO_TUNNEL_TOKEN:-}" ] && [ -z "${AUDIO_GPU_TOKEN:-}" ]; then
     cat >&2 <<'MSG'
 !! 터널이 설정돼 있는데 AUDIO_GPU_TOKEN 이 비었습니다.
 !! 이대로 뜨면 주소를 아는 사람이 GPU 를 직접 부를 수 있고,
@@ -343,11 +343,11 @@ fi
 
 # ── 6. 터널 (설정돼 있을 때만) ───────────────────────────────────
 #
-# 자격증명 전달 방식은 아직 미결정입니다 (task 4-2). TUNNEL_TOKEN 이 있으면
+# 자격증명 전달 방식은 아직 미결정입니다 (task 4-2). AUDIO_TUNNEL_TOKEN 이 있으면
 # 그것으로 띄우고, 없으면 조용히 건너뜁니다 — 로컬에서 시험하는 단계에서는
 # 터널이 없는 것이 정상입니다.
 
-if [ -n "$TUNNEL_TOKEN" ]; then
+if [ -n "$AUDIO_TUNNEL_TOKEN" ]; then
     if ! command -v cloudflared >/dev/null; then
         log "cloudflared 설치"
         curl -fsSL -o /tmp/cf.deb \
@@ -360,12 +360,12 @@ if [ -n "$TUNNEL_TOKEN" ]; then
         log "터널 시작"
         log "  ⚠ 대시보드의 Public Hostname 이 **127.0.0.1:$MANAGER_PORT (매니저)** 를"
         log "    가리키는지 확인하세요. $SPEACHES_PORT 로 두면 /docs · Web UI 가 인증 없이 열립니다"
-        setsid nohup cloudflared tunnel --no-autoupdate run --token "$TUNNEL_TOKEN" \
+        setsid nohup cloudflared tunnel --no-autoupdate run --token "$AUDIO_TUNNEL_TOKEN" \
             >>"$LOG_DIR/tunnel.log" 2>&1 &
         echo $! > "$RUN_DIR/tunnel.pid"
     fi
 else
-    log "TUNNEL_TOKEN 없음 — 터널 건너뜀 (로컬 시험 단계에서는 정상)"
+    log "AUDIO_TUNNEL_TOKEN 없음 — 터널 건너뜀 (로컬 시험 단계에서는 정상)"
 fi
 
 # ── 7. 생존 감시 ──────────────────────────────────────────────────
